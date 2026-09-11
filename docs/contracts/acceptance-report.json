@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "execution_mode": "mock",
+  "run_id": "run_3f1af1aabb5d4d20b5b65a5f9d13c9f7",
+  "status": "succeeded",
+  "checks": {
+    "same_run_on_retry": true,
+    "all_11_steps_completed": true,
+    "result_is_mock": true,
+    "input_hash_preserved": true,
+    "artifact_hash_verified": true,
+    "material_binding": true,
+    "result_survives_api_process_restart": true,
+    "artifact_survives_api_process_restart": true
+  },
+  "notice": "仅验证自动化协议；没有计算频率、位移、反力或任何物理结果。",
+  "verified_at": "2026-09-10T14:26:23.396134+00:00",
+  "implementation_version": "modal-mock-1",
+  "runtime_versions": {
+    "python": "3.13.5",
+    "runner": "mock-entry-1",
+    "provider": "stateful-mock-1",
+    "cae_software": "not_installed"
+  },
+  "transport": "real_loopback_http"
+}

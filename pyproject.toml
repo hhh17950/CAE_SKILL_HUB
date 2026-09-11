@@ -1,0 +1,31 @@
+[project]
+name = "cae-skill"
+version = "0.2.0"
+description = "Typed CAE workflows with durable jobs and isolated execution"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.6,<3",
+  "uvicorn>=0.32,<1",
+  "python-multipart>=0.0.20,<1",
+  "httpx>=0.28,<1",
+  "anyio>=4.8,<5",
+  "aiosqlite>=0.21,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.9,<1"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
