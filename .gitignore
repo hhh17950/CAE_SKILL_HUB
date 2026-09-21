@@ -1,9 +1,9 @@
 .venv/
-.uv-cache/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
-.runtime/
 *.pyc
 docs.zip
+workspace/
+static/logs/

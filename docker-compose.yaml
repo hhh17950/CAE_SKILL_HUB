@@ -1,0 +1,40 @@
+services:
+  api:
+    build: .
+    image: cae-skill-hub:local
+    command: ["python", "-m", "uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: ${CAE_ENV_FILE:-.env}
+    environment:
+      CAE_DATABASE_PATH: /app/workspace/guie.db
+      CAE_RUN_ROOT: /app/workspace/runs
+      CAE_SERVICE_LOG_ROOT: /app/workspace/logs
+      CAE_TASK_LOG_ROOT: /app/static/logs
+      CAE_MODEL_ROOT: /models
+    volumes:
+      - ./workspace:/app/workspace
+      - ./static/logs:/app/static/logs
+      - ${MODEL_HOST_DIR:?请配置模型目录}:/models:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+
+  worker:
+    build: .
+    image: cae-skill-hub:local
+    command: ["python", "worker.py"]
+    env_file: ${CAE_ENV_FILE:-.env}
+    environment:
+      CAE_DATABASE_PATH: /app/workspace/guie.db
+      CAE_RUN_ROOT: /app/workspace/runs
+      CAE_SERVICE_LOG_ROOT: /app/workspace/logs
+      CAE_TASK_LOG_ROOT: /app/static/logs
+      CAE_MODEL_ROOT: /models
+    volumes:
+      - ./workspace:/app/workspace
+      - ./static/logs:/app/static/logs
+      - ${MODEL_HOST_DIR:?请配置模型目录}:/models:ro
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s

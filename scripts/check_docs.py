@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
-from app.config import Settings
-from app.main import create_app
-from app.schemas.analysis import AnalysisRequest
+from api.schemas import GuieRunRequest
+from core.config import Settings
+from main import create_app
 
 
 def main():
@@ -27,12 +27,12 @@ def main():
         for raw in re.findall(r"```json\s*\n(.*?)\n```", body, flags=re.S):
             try:
                 example = json.loads(raw)
-                if isinstance(example, dict) and "workflow_id" in example and "input" in example:
-                    AnalysisRequest.model_validate(example)
+                if isinstance(example, dict) and "model_path" in example:
+                    GuieRunRequest.model_validate(example)
                     examples += 1
             except (ValueError, TypeError) as exc:
                 errors.append(f"{file.relative_to(root)}: invalid JSON example: {exc}")
-    schema = create_app(Settings(_env_file=None, enable_legacy_api=False, provider="mock")).openapi()
+    schema = create_app(Settings(_env_file=None)).openapi()
     contract = (root / "docs/对接指南.md").read_text(encoding="utf-8")
     documented = set(re.findall(r"\| .*?`(GET|POST|PUT|DELETE|PATCH) (/[^` ]+)`", contract))
     published = {

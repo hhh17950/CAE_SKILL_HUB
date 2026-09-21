@@ -4,15 +4,15 @@ import argparse
 import json
 from pathlib import Path
 
-from app.config import Settings
-from app.main import create_app
+from core.config import Settings
+from main import create_app
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Fail if checked-in schema is stale")
     args = parser.parse_args()
-    schema = create_app(Settings(_env_file=None, enable_legacy_api=False, provider="mock")).openapi()
+    schema = create_app(Settings(_env_file=None)).openapi()
     rendered = json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     target = Path(__file__).resolve().parents[1] / "docs/contracts/openapi.json"
     if args.check:
