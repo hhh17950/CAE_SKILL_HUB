@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     api_tokens: dict[str, str] = Field(default_factory=lambda: {"local-test-token": "demo"})
     model_root: Path | None = None
+    project_root: Path = Path("workspace")
+    output_root: Path = Path("workspace")
     database_path: Path = Path("workspace/guie_ori.db")
     run_root: Path = Path("workspace/runs")
     task_log_root: Path = Path("static/logs")

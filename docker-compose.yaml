@@ -10,6 +10,8 @@ services:
       CAE_SERVICE_LOG_ROOT: /app/workspace/logs
       CAE_TASK_LOG_ROOT: /app/static/logs
       CAE_MODEL_ROOT: /models
+      CAE_PROJECT_ROOT: /app/workspace
+      CAE_OUTPUT_ROOT: /app/workspace
     volumes:
       - ./workspace:/app/workspace
       - ./static/logs:/app/static/logs
@@ -31,6 +33,8 @@ services:
       CAE_SERVICE_LOG_ROOT: /app/workspace/logs
       CAE_TASK_LOG_ROOT: /app/static/logs
       CAE_MODEL_ROOT: /models
+      CAE_PROJECT_ROOT: /app/workspace
+      CAE_OUTPUT_ROOT: /app/workspace
     volumes:
       - ./workspace:/app/workspace
       - ./static/logs:/app/static/logs

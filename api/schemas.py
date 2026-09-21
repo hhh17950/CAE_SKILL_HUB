@@ -29,6 +29,9 @@ class Problem(ApiModel):
 
 class GuieRunRequest(ApiModel):
     model_path: Annotated[str, Field(strict=True, min_length=1)]
+    project_dir: Annotated[str, Field(strict=True, min_length=1)]
+    jusmar_log_path: Annotated[str, Field(strict=True, min_length=1)] | None = None
+    cloud_info_path: Annotated[str, Field(strict=True, min_length=1)] | None = None
     young_modulus: Annotated[float, Field(strict=True, gt=0)]
     poisson_ratio: Annotated[float, Field(strict=True, gt=-1, lt=0.5)]
     density: Annotated[int, Field(strict=True, gt=0)]

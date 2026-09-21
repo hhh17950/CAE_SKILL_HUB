@@ -50,7 +50,7 @@ python main.py
 python worker.py
 ```
 
-打开 `http://127.0.0.1:8000/docs`，通过 Authorize 输入令牌，提交 `POST /api/v1/guie-runs`。每次提交创建新任务，不做幂等去重；不要盲目自动重试提交。
+打开 `http://127.0.0.1:8000/docs`，通过 Authorize 输入令牌，提交 `POST /api/v1/guie-runs`。请求必须包含已有工程目录 `project_dir`；可选传入 `jusmar_log_path` 和 `cloud_info_path` 指定输出文件，服务使用传入的路径。工程、输出路径分别限制在 `CAE_PROJECT_ROOT`、`CAE_OUTPUT_ROOT`；容器默认都指向共享的 `/app/workspace`。每次提交创建新任务，不做幂等去重；不要盲目自动重试提交。
 
 ## 代码结构
 

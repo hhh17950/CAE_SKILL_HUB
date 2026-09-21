@@ -25,6 +25,9 @@ def settings(tmp_path):
     root = tmp_path / "models"
     root.mkdir()
     (root / "part.stp").write_text("test geometry", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "existing-project").mkdir()
     config = Settings(
         _env_file=None,
         database_path=tmp_path / "guie.db",
@@ -32,6 +35,8 @@ def settings(tmp_path):
         task_log_root=tmp_path / "task-logs",
         service_log_root=tmp_path / "service-logs",
         model_root=root,
+        project_root=workspace,
+        output_root=workspace,
         test_sleep_seconds=0.01,
         api_tokens={"alpha-token": "alpha", "beta-token": "beta"},
     )
@@ -43,6 +48,7 @@ def settings(tmp_path):
 def body(settings):
     return {
         "model_path": str(settings.model_root / "part.stp"),
+        "project_dir": str(settings.project_root / "existing-project"),
         "young_modulus": 200000000000.0,
         "poisson_ratio": 0.3,
         "density": 7850,

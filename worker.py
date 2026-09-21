@@ -12,6 +12,7 @@ from core.config import Settings
 from core.logging import configure_logging
 from services import modal
 from services.executor import execute
+from services.paths import existing_project_dir, new_output_file
 from storage.repository import RunRepository
 
 
@@ -47,7 +48,12 @@ class GuieWorker:
             log_dir = self.settings.task_log_root.resolve() / run_id
             run_dir.mkdir(parents=True, exist_ok=False)
             log_dir.mkdir(parents=True, exist_ok=False)
-            (run_dir / "project").mkdir()
+            parameters["project_dir"] = str(
+                existing_project_dir(parameters["project_dir"], self.settings)
+            )
+            for name in ("jusmar_log_path", "cloud_info_path"):
+                if value := parameters[name]:
+                    parameters[name] = str(new_output_file(value, self.settings, name))
             # Re-check in the worker: a queued input file may have changed since submission.
             model = Path(parameters["model_path"]).resolve()
             root = self.settings.model_root

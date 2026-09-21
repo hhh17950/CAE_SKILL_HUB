@@ -17,9 +17,9 @@ def environment(
 ) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
-        GUIE_PROJECT_DIR=str(run_dir / "project"),
-        GUIE_JUSMAR_LOG=str(log_dir / "jusmar.log"),
-        GUIE_CLOUD_INFO_DIR=str(run_dir / "cloud_info.json"),
+        GUIE_PROJECT_DIR=parameters["project_dir"],
+        GUIE_JUSMAR_LOG=parameters["jusmar_log_path"] or str(log_dir / "jusmar.log"),
+        GUIE_CLOUD_INFO_DIR=parameters["cloud_info_path"] or str(run_dir / "cloud_info.json"),
         GUIE_MODEL_PATH=parameters["model_path"],
         GUIE_YOUNG_MODULUS=str(parameters["young_modulus"]),
         GUIE_POISSON_TATID=str(parameters["poisson_ratio"]),

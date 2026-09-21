@@ -7,3 +7,5 @@ __pycache__/
 docs.zip
 workspace/
 static/logs/
+.idea/
+.DS_Store

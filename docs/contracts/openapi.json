@@ -23,10 +23,34 @@
       "GuieRunRequest": {
         "additionalProperties": false,
         "properties": {
+          "cloud_info_path": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Info Path"
+          },
           "density": {
             "exclusiveMinimum": 0.0,
             "title": "Density",
             "type": "integer"
+          },
+          "jusmar_log_path": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jusmar Log Path"
           },
           "model_path": {
             "minLength": 1,
@@ -44,6 +68,11 @@
             "title": "Poisson Ratio",
             "type": "number"
           },
+          "project_dir": {
+            "minLength": 1,
+            "title": "Project Dir",
+            "type": "string"
+          },
           "young_modulus": {
             "exclusiveMinimum": 0.0,
             "title": "Young Modulus",
@@ -52,6 +81,7 @@
         },
         "required": [
           "model_path",
+          "project_dir",
           "young_modulus",
           "poisson_ratio",
           "density",

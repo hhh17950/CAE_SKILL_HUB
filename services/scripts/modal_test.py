@@ -38,7 +38,9 @@ def main() -> int:
         print("Invalid numeric environment variable", file=sys.stderr, flush=True)
         return 2
     project_dir = Path(os.environ["GUIE_PROJECT_DIR"])
-    project_dir.mkdir(parents=True, exist_ok=True)
+    if not project_dir.is_dir():
+        print("Project directory does not exist", file=sys.stderr, flush=True)
+        return 2
     solver_log = Path(os.environ["GUIE_JUSMAR_LOG"])
     cloud_info = Path(os.environ["GUIE_CLOUD_INFO_DIR"])
     logger.remove()

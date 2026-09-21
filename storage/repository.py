@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, or_, select, text, update
 from sqlalchemy.exc import OperationalError
 
 from storage.database import Database, run_in_thread
@@ -57,6 +57,31 @@ class RunRepository:
     def _submit(self, owner: str, parameters: dict) -> dict:
         run_id = f"run_{uuid4().hex}"
         with self.database.sessions.begin() as session:
+            # Reserve caller-selected output names across owners and queued runs.
+            # BEGIN IMMEDIATE makes the check and insert one SQLite write transaction.
+            session.execute(text("BEGIN IMMEDIATE"))
+            output_paths = [
+                parameters.get(name)
+                for name in ("jusmar_log_path", "cloud_info_path")
+                if parameters.get(name)
+            ]
+            if output_paths:
+                used = session.execute(
+                    select(guie_runs.c.run_id)
+                    .where(
+                        or_(
+                            *(
+                                func.json_extract(guie_runs.c.request_json, f"$.{name}").in_(
+                                    output_paths
+                                )
+                                for name in ("jusmar_log_path", "cloud_info_path")
+                            )
+                        )
+                    )
+                    .limit(1)
+                ).first()
+                if used is not None:
+                    raise ValueError("自定义输出路径已被其他任务使用，请换一个文件名")
             session.execute(
                 insert(guie_runs).values(
                     run_id=run_id,
