@@ -20,8 +20,6 @@ class RequestBodyLimit:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_bytes:
-                    # FastAPI preserves HTTPException during body parsing; generic
-                    # exceptions are otherwise translated to an incorrect HTTP 400.
                     raise HTTPException(413, "请求体超过服务限制")
             return message
 

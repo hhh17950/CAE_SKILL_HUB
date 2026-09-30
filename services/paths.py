@@ -5,26 +5,38 @@ from pathlib import Path
 from core.config import Settings
 
 
-def existing_project_dir(value: str, settings: Settings) -> Path:
-    path = Path(value)
-    if not path.is_absolute():
-        raise ValueError("project_dir 必须为服务端绝对路径")
-    resolved = path.resolve()
-    if not resolved.is_relative_to(settings.project_root.resolve()) or not resolved.is_dir():
-        raise ValueError("project_dir 不存在或不在允许的工程根目录")
-    return resolved
+def task_dir(settings: Settings, run_id: str) -> Path:
+    return settings.workspace_root.resolve() / run_id
 
 
-def new_output_file(value: str, settings: Settings, field: str) -> Path:
-    path = Path(value)
-    if not path.is_absolute():
-        raise ValueError(f"{field} 必须为服务端绝对路径")
-    resolved = path.resolve()
-    root = settings.output_root.resolve()
-    if not resolved.is_relative_to(root) or not resolved.parent.is_dir():
-        raise ValueError(f"{field} 的父目录不存在或超出允许的输出根目录")
-    if resolved.exists():
-        raise ValueError(f"{field} 已存在，请为新任务指定新文件")
-    if field == "cloud_info_path" and resolved.suffix.lower() != ".json":
-        raise ValueError("cloud_info_path 必须指向 .json 文件")
-    return resolved
+def create_task_dir(settings: Settings, run_id: str) -> Path:
+    root = task_dir(settings, run_id)
+    root.mkdir(parents=True, exist_ok=False)
+    (root / "model").mkdir()
+    (root / "project").mkdir()
+    (root / "logs").mkdir()
+    return root
+
+
+def model_path(root: Path, filename: str) -> Path:
+    return root / "model" / filename
+
+
+def project_dir(root: Path) -> Path:
+    return root / "project"
+
+
+def jusmar_log(root: Path) -> Path:
+    return root / "jusmar.log"
+
+
+def cloud_info(root: Path) -> Path:
+    return root / "cloud_info.json"
+
+
+def stdout_log(root: Path) -> Path:
+    return root / "logs" / "stdout.log"
+
+
+def stderr_log(root: Path) -> Path:
+    return root / "logs" / "stderr.log"

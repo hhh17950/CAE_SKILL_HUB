@@ -7,7 +7,6 @@ Result leaves the synchronous helper that created it. Schema changes are CLI-onl
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -51,41 +50,16 @@ class RunRepository:
     async def close(self):
         await run_in_thread(self.database.close)
 
-    async def submit(self, owner: str, parameters: dict) -> dict:
-        return await run_in_thread(self._submit, owner, parameters)
+    async def submit(self, parameters: dict) -> dict:
+        return await run_in_thread(self._submit, parameters)
 
-    def _submit(self, owner: str, parameters: dict) -> dict:
-        run_id = f"run_{uuid4().hex}"
+    def _submit(self, run_id: str, parameters: dict) -> dict:
         with self.database.sessions.begin() as session:
-            # Reserve caller-selected output names across owners and queued runs.
-            # BEGIN IMMEDIATE makes the check and insert one SQLite write transaction.
             session.execute(text("BEGIN IMMEDIATE"))
-            output_paths = [
-                parameters.get(name)
-                for name in ("jusmar_log_path", "cloud_info_path")
-                if parameters.get(name)
-            ]
-            if output_paths:
-                used = session.execute(
-                    select(guie_runs.c.run_id)
-                    .where(
-                        or_(
-                            *(
-                                func.json_extract(guie_runs.c.request_json, f"$.{name}").in_(
-                                    output_paths
-                                )
-                                for name in ("jusmar_log_path", "cloud_info_path")
-                            )
-                        )
-                    )
-                    .limit(1)
-                ).first()
-                if used is not None:
-                    raise ValueError("自定义输出路径已被其他任务使用，请换一个文件名")
             session.execute(
                 insert(guie_runs).values(
                     run_id=run_id,
-                    owner=owner,
+                    owner="public",
                     status="queued",
                     request_json=json.dumps(parameters),
                     created_at=utc_now(),
@@ -97,17 +71,14 @@ class RunRepository:
                 .one()
             )
 
-    async def get(self, owner: str, run_id: str) -> dict | None:
-        return await run_in_thread(self._get, owner, run_id)
+    async def get(self, run_id: str) -> dict | None:
+        return await run_in_thread(self._get, run_id)
 
-    def _get(self, owner: str, run_id: str) -> dict | None:
+    def _get(self, run_id: str) -> dict | None:
         with self.database.sessions() as session:
             row = (
                 session.execute(
-                    select(guie_runs).where(
-                        guie_runs.c.run_id == run_id,
-                        guie_runs.c.owner == owner,
-                    )
+                    select(guie_runs).where(guie_runs.c.run_id == run_id)
                 )
                 .mappings()
                 .one_or_none()

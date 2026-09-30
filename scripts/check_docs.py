@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
-from api.schemas import GuieRunRequest
 from core.config import Settings
 from main import create_app
 
@@ -14,7 +13,6 @@ def main():
     root = Path(__file__).resolve().parents[1]
     files = [root / "README.md", *sorted((root / "docs").rglob("*.md"))]
     errors = []
-    examples = 0
     for file in files:
         body = file.read_text(encoding="utf-8")
         for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", body):
@@ -26,10 +24,7 @@ def main():
                 errors.append(f"{file.relative_to(root)}: missing link {relative}")
         for raw in re.findall(r"```json\s*\n(.*?)\n```", body, flags=re.S):
             try:
-                example = json.loads(raw)
-                if isinstance(example, dict) and "model_path" in example:
-                    GuieRunRequest.model_validate(example)
-                    examples += 1
+                json.loads(raw)
             except (ValueError, TypeError) as exc:
                 errors.append(f"{file.relative_to(root)}: invalid JSON example: {exc}")
     schema = create_app(Settings(_env_file=None)).openapi()

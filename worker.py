@@ -3,16 +3,16 @@
 import asyncio
 import fcntl
 import signal
+import time
 from contextlib import contextmanager
-from pathlib import Path
 
 from loguru import logger
 
 from core.config import Settings
 from core.logging import configure_logging
-from services import modal
+from services import modal, paths
+from services.cloud_png import render_cloud_from_json
 from services.executor import execute
-from services.paths import existing_project_dir, new_output_file
 from storage.repository import RunRepository
 
 
@@ -43,40 +43,64 @@ class GuieWorker:
         if claimed is None:
             return False
         run_id, parameters = claimed
+        started_at = time.monotonic()
+        logger.info(
+            "CLAIMED run_id={} status=running model={} young={} poisson={} density={} roots={}",
+            run_id,
+            parameters.get("model_filename"),
+            parameters.get("young_modulus"),
+            parameters.get("poisson_ratio"),
+            parameters.get("density"),
+            parameters.get("number_of_roots"),
+        )
         try:
-            run_dir = self.settings.run_root.resolve() / run_id
-            log_dir = self.settings.task_log_root.resolve() / run_id
-            run_dir.mkdir(parents=True, exist_ok=False)
-            log_dir.mkdir(parents=True, exist_ok=False)
-            parameters["project_dir"] = str(
-                existing_project_dir(parameters["project_dir"], self.settings)
-            )
-            for name in ("jusmar_log_path", "cloud_info_path"):
-                if value := parameters[name]:
-                    parameters[name] = str(new_output_file(value, self.settings, name))
-            # Re-check in the worker: a queued input file may have changed since submission.
-            model = Path(parameters["model_path"]).resolve()
-            root = self.settings.model_root
-            if root is None or not model.is_relative_to(root.resolve()) or not model.is_file():
-                raise ValueError("模型文件不存在或超出允许目录")
-            parameters["model_path"] = str(model)
+            run_dir = paths.task_dir(self.settings, run_id)
+            if not run_dir.is_dir():
+                raise ValueError("任务工作目录不存在或已被删除")
+            parameters["run_id"] = str(run_dir)
+            parameters["test_sleep_seconds"] = str(self.settings.test_sleep_seconds)
+            parameters["test_exit_code"] = str(self.settings.test_exit_code)
+            logger.info("START run_id={} cmd={} workdir={}", run_id, modal.command(self.settings), run_dir / "project")
             result = await execute(
-                modal.command(),
-                modal.environment(parameters, run_dir, log_dir, self.settings),
-                run_dir,
-                log_dir,
+                modal.command(self.settings),
+                modal.environment(parameters),
+                run_dir / "project",
+                run_dir / "logs",
                 self.settings.run_timeout_seconds,
             )
+            elapsed = time.monotonic() - started_at
             if result.timed_out:
                 status, error = "timed_out", "脚本运行超时"
             elif result.exit_code == 0:
                 status, error = "succeeded", None
             else:
                 status, error = "failed", "脚本退出码非 0"
+            logger.info(
+                "DONE run_id={}, status={}, exit_code={}, elapsed={:.2f}s",
+                run_id, status, result.exit_code, elapsed,
+            )
+            if status == "succeeded":
+                try:
+                    cloud_dir = await asyncio.to_thread(
+                        render_cloud_from_json, paths.cloud_info(run_dir)
+                    )
+                except Exception as exc:
+                    status, error = "failed", f"云图生成失败：{exc}"
+                    logger.exception("run_id={} cloud generation failed", run_id)
+                else:
+                    if cloud_dir is not None:
+                        parameters["cloud_dir"] = cloud_dir
+                        logger.info("CLOUD run_id={} cloud_dir={}", run_id, cloud_dir)
+                    else:
+                        logger.info("CLOUD run_id={} no renderable cloud_info, skipped", run_id)
             await self.store.finish(run_id, status, result.exit_code, error)
-            logger.info("run_id={} status={} exit_code={}", run_id, status, result.exit_code)
+            logger.info(
+                "FINISH run_id={} status={} exit_code={} error={} elapsed={:.2f}s",
+                run_id, status, result.exit_code, error, time.monotonic() - started_at,
+            )
         except asyncio.CancelledError:
             await self.store.finish(run_id, "unknown", None, "Worker 被中断，需人工核对")
+            logger.warning("CANCELLED run_id={} marked unknown, run_id")
             raise
         except Exception:
             logger.exception("run_id={} execution error", run_id)
@@ -88,7 +112,14 @@ class GuieWorker:
             await self.store.initialize()
             with worker_lock(self.settings.database_path):
                 await self.store.recover_running()
-                logger.info("modal test-script worker started")
+                logger.info(
+                    "Worker stared db={} workspace={} guierunner={} poll={}s timeout={}s",
+                    self.settings.database_path.resolve(),
+                    self.settings.workspace_root.resolve(),
+                    self.settings.guierunner_path or "test-script",
+                    self.settings.worker_poll_seconds,
+                    self.settings.run_timeout_seconds,
+                )
                 while True:
                     if not await self.run_once():
                         await asyncio.sleep(self.settings.worker_poll_seconds)

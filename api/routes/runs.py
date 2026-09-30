@@ -1,17 +1,15 @@
-"""HTTP endpoints for one fixed guie2 script flow."""
-
 import asyncio
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Annotated
+from uuid import uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from api.dependencies import Owner
 from api.errors import DomainError, not_found
-from api.schemas import GuieRunRequest, GuieRunView
-from services.paths import existing_project_dir, new_output_file
+from api.schemas import GuieRunView
+from services import paths
 from storage.repository import RunRepository
 
 router = APIRouter(prefix="/guie-runs", tags=["guie-runs"])
@@ -21,12 +19,12 @@ def store(request: Request) -> RunRepository:
     return request.app.state.guie_store
 
 
-async def owned_run(request: Request, owner: str, run_id: str) -> GuieRunView:
-    return run_view(await owned_record(request, owner, run_id))
+async def owned_run(request: Request, run_id: str) -> GuieRunView:
+    return run_view(await owned_record(request, run_id))
 
 
-async def owned_record(request: Request, owner: str, run_id: str) -> dict:
-    found = await store(request).get(owner, run_id)
+async def owned_record(request: Request, run_id: str) -> dict:
+    found = await store(request).get(run_id)
     if found is None:
         raise not_found("任务")
     return found
@@ -53,62 +51,85 @@ def run_view(row: dict) -> GuieRunView:
     )
 
 
-def checked_model_path(request: Request, model_path: str) -> Path:
+@router.post("/modal", response_model=GuieRunView, status_code=202, operation_id="submit_modal_guie_run")
+async def submit_modal_guie_run(
+    request: Request,
+    response: Response,
+    model_file: UploadFile = File(description="上传的几何模型文件"),
+    young_modulus: Annotated[float, Form(gt=0)] = 2.0e11,
+    poisson_tatio: Annotated[float, Form(gt=-1)] = 0.3,
+    density: Annotated[int, Form(gt=0)] = 7850,
+    number_of_roots: Annotated[int, Form(ge=1)] = 10,
+):
     settings = request.app.state.settings
-    root = settings.model_root
-    if root is None:
-        raise DomainError("MODEL_PATH_DISABLED", "服务未配置可访问的模型根目录", 422)
-    path = Path(model_path)
-    if not path.is_absolute():
-        raise DomainError("MODEL_PATH_INVALID", "模型路径必须为服务端绝对路径", 422)
-    resolved = path.resolve()
-    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
-        raise DomainError("MODEL_PATH_INVALID", "模型文件不存在或超出允许目录", 422)
-    return resolved
-
-
-@router.post("", response_model=GuieRunView, status_code=202, operation_id="submit_guie_run")
-async def submit_guie_run(body: GuieRunRequest, request: Request, owner: Owner, response: Response):
-    model = checked_model_path(request, body.model_path)
-    settings = request.app.state.settings
-    parameters = body.model_dump()
-    parameters["model_path"] = str(model)
+    parameters = {
+        "young_modulus": young_modulus,
+        "poisson_tatio": poisson_tatio,
+        "density": density,
+        "number_of_roots": number_of_roots,
+    }
+    filename = Path(model_file.filename or "modal.stp").name
+    run_id = f"run_{uuid4().hex}"
+    submit_dir = paths.create_task_dir(settings, run_id)
+    model = paths.model_path(submit_dir, filename)
+    written = 0
+    with model.open("w") as targer:
+        while chunk := await model_file.read(1024 * 1024):
+            written += len(chunk)
+            if written > settings.max_model_bytes:
+                raise DomainError("MODEL_TOO_LARGE", "上传的几何模型文件超过服务限制", 413)
+            targer.write(chunk)
+    if written == 0:
+        raise DomainError("MODEL_EMPTY", "上传的几何模型为空", 422)
+    parameters["model_filename"] = filename
     try:
-        parameters["project_dir"] = str(existing_project_dir(body.project_dir, settings))
-        for name in ("jusmar_log_path", "cloud_info_path"):
-            if value := getattr(body, name):
-                parameters[name] = str(new_output_file(value, settings, name))
-        if (
-            parameters["jusmar_log_path"] == parameters["cloud_info_path"]
-            and parameters["jusmar_log_path"] is not None
-        ):
-            raise ValueError("求解器日志和云图信息不能使用同一个文件")
-    except ValueError as exc:
-        raise DomainError("PATH_INVALID", str(exc), 422) from exc
-    try:
-        run = run_view(await store(request).submit(owner, parameters))
-    except ValueError as exc:
-        raise DomainError("OUTPUT_PATH_IN_USE", str(exc), 422) from exc
+        run = run_view(await store(request).submit(run_id, parameters))
+    except Exception:
+        raise
     response.headers["Location"] = run.status_url
     return run
 
 
 @router.get("/{run_id}", response_model=GuieRunView, operation_id="get_guie_run")
-async def get_guie_run(run_id: str, request: Request, owner: Owner):
-    return await owned_run(request, owner, run_id)
+async def get_guie_run(run_id: str, request: Request):
+    return await owned_run(request, run_id)
+
+
+@router.get("/{run_id}/cloud/{filename}", operation_id="get_guie_cloud_image")
+async def get_guie_cloud_image(run_id: str, filename: str, request: Request):
+    """通过 cloud_info.json 把文件名映射到真实路径，然后返回该图片文件。
+
+    只允许读取当前任务 cloud_info.json 中真实声明的 cloud_file_name，
+    filename 必须匹配 basename，杜绝路径遍历。智能体拿到 URL 后自行下载。
+    """
+    submit_dir = paths.task_dir(request.app.state.settings, run_id)
+    info_path = paths.cloud_info(submit_dir)
+    if not info_path.is_file():
+        raise not_found("该任务的云图信息文件")
+    try:
+        content = await asyncio.to_thread(info_path.read_text, encoding="utf-8")
+        cloud_info = json.loads(content)
+    except (ValueError, UnicodeError) as exc:
+        raise DomainError("RESULT_INVALID", "云图信息文件不是有效 JSON", 500) from exc
+    if not isinstance(cloud_info, dict):
+        raise not_found("云图文件")
+    for entry in cloud_info.values():
+        if isinstance(entry, dict) and Path(entry["cloud_file_name"]).name == filename:
+            target = Path(entry["cloud_file_name"])
+            if not target.is_file():
+                raise not_found("云图文件不存在")
+            return FileResponse(target, media_type="image/png")
+    raise not_found("云图文件")
 
 
 @router.get("/{run_id}/results", operation_id="get_guie_results")
-async def get_guie_results(run_id: str, request: Request, owner: Owner):
-    record = await owned_record(request, owner, run_id)
+async def get_guie_results(run_id: str, request: Request):
+    record = await owned_record(request, run_id)
     run = run_view(record)
     if run.status != "succeeded":
         raise DomainError("RESULT_NOT_READY", "任务尚未正常退出", 409)
-    parameters = json.loads(record["request_json"])
-    path = Path(
-        parameters["cloud_info_path"]
-        or request.app.state.settings.run_root.resolve() / run_id / "cloud_info.json"
-    )
+    submit_dir = paths.task_dir(request.app.state.settings, run_id)
+    path = paths.cloud_info(submit_dir)
     if not path.is_file():
         raise DomainError("RESULT_NOT_FOUND", "脚本未生成云图信息文件", 404)
     try:
@@ -116,19 +137,26 @@ async def get_guie_results(run_id: str, request: Request, owner: Owner):
         cloud_info = json.loads(content)
     except (ValueError, UnicodeError) as exc:
         raise DomainError("RESULT_INVALID", "脚本生成的结果文件不是有效 JSON", 500) from exc
-    return {"run_id": run_id, "exit_code": run.exit_code, "cloud_info": cloud_info}
+    cloud_dir = None
+    if isinstance(cloud_info, dict) and cloud_info:
+        first = next(iter(cloud_info.values()))
+        cloud_dir = str(Path(first["cloud_file_name"]).parent)
+    return {
+        "run_id": run_id,
+        "exit_code": run.exit_code,
+        "cloud_dir": cloud_dir,
+        "cloud_info": cloud_info,
+    }
 
 
 @router.get("/{run_id}/logs/{kind}", operation_id="get_guie_log")
 async def get_guie_log(
-    kind: Literal["stdout", "stderr", "jusmar"], run_id: str, request: Request, owner: Owner
+    kind: Literal["stdout", "stderr", "jusmar"], run_id: str, request: Request
 ):
-    record = await owned_record(request, owner, run_id)
-    path = request.app.state.settings.task_log_root.resolve() / run_id / f"{kind}.log"
+    submit_dir = paths.task_dir(request.app.state.settings, run_id)
+    path = paths.stdout_log(submit_dir) if kind == "stdout" else paths.stderr_log(submit_dir)
     if kind == "jusmar":
-        parameters = json.loads(record["request_json"])
-        if parameters["jusmar_log_path"]:
-            path = Path(parameters["jusmar_log_path"])
+        path = paths.jusmar_log(submit_dir)
     if not path.is_file():
         raise not_found("任务日志")
     return FileResponse(path, media_type="text/plain; charset=utf-8")

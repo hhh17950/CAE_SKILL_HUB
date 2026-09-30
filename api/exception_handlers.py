@@ -41,7 +41,6 @@ def install_handlers(app: FastAPI):
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
-        # Do not echo raw input, filesystem paths or exception context to the caller.
         fields = [
             {"field": ".".join(str(part) for part in item["loc"]), "reason": item["type"]}
             for item in exc.errors()

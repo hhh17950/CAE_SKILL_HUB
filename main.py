@@ -74,6 +74,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     install_openapi(app)
+    if settings.mcp_enabled:
+        try:
+            from services.mcp_server import fastmcp_app as _mcp
+
+            app.mount("/mcp", _mcp.streamable_http_app())
+            logger.info("MCP server mounted as /mcp")
+        except ImportError:
+            logger.error("CAE_MCP_ENABLED is set but the `mcp` dependency is missing; /mcp is NOT mounted")
     return app
 
 

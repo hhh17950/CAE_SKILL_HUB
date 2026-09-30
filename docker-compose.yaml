@@ -1,44 +1,37 @@
+version: "3"
 services:
-  api:
+  cae-run:
     build: .
-    image: cae-skill-hub:local
-    command: ["python", "-m", "uvicorn", "main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    container_name: cae-run
+    image: cae-agent:v1.0.0
+    command: ["sh", "-c", "alembic upgrade head && exec python -m uvicorn main:create_app --factory --host 0.0.0.0 --port 8000"]
     env_file: ${CAE_ENV_FILE:-.env}
     environment:
-      CAE_DATABASE_PATH: /app/workspace/guie.db
-      CAE_RUN_ROOT: /app/workspace/runs
-      CAE_SERVICE_LOG_ROOT: /app/workspace/logs
-      CAE_TASK_LOG_ROOT: /app/static/logs
-      CAE_MODEL_ROOT: /models
-      CAE_PROJECT_ROOT: /app/workspace
-      CAE_OUTPUT_ROOT: /app/workspace
+      CAE_DATABASE_PATH: /opt/cae_service/workspace/guie.db
+      CAE_WORKSPACE_PATH: /opt/cae_service/workspace
+      CAE_SERVICE_LOG_ROOT: /opt/cae_service/workspace/logs
+      CAE_PUBLIC_BASE_URL: http://0.0.0.0:8000
     volumes:
-      - ./workspace:/app/workspace
-      - ./static/logs:/app/static/logs
-      - ${MODEL_HOST_DIR:?请配置模型目录}:/models:ro
+      - ${WORKSPACE}:/opt/cae_service/workspace
+      - ${SSTA_CAE_PATH}:/opt/ssta-cae
     ports:
-      - "127.0.0.1:8000:8000"
-    init: true
-    restart: unless-stopped
+      - "0.0.0.0:8000:8000"
+    restart: always
     stop_grace_period: 45s
 
   worker:
     build: .
-    image: cae-skill-hub:local
+    container_name: cae-worker
+    image: cae-worker:v1.0.0
     command: ["python", "worker.py"]
     env_file: ${CAE_ENV_FILE:-.env}
     environment:
-      CAE_DATABASE_PATH: /app/workspace/guie.db
-      CAE_RUN_ROOT: /app/workspace/runs
-      CAE_SERVICE_LOG_ROOT: /app/workspace/logs
-      CAE_TASK_LOG_ROOT: /app/static/logs
-      CAE_MODEL_ROOT: /models
-      CAE_PROJECT_ROOT: /app/workspace
-      CAE_OUTPUT_ROOT: /app/workspace
+      CAE_DATABASE_PATH: /opt/cae_service/workspace/guie.db
+      CAE_WORKSPACE_PATH: /opt/cae_service/workspace
+      CAE_SERVICE_LOG_ROOT: /opt/cae_service/workspace/logs
+      CAE_GUIERUNNER_PATH: ${CAE_GUIERUNNER_PATH:-}
     volumes:
-      - ./workspace:/app/workspace
-      - ./static/logs:/app/static/logs
-      - ${MODEL_HOST_DIR:?请配置模型目录}:/models:ro
-    init: true
-    restart: unless-stopped
+      - ${WORKSPACE}:/opt/cae_service/workspace
+      - ${SSTA_CAE_PATH}:/opt/ssta-cae
+    restart: always
     stop_grace_period: 45s
