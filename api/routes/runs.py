@@ -1,10 +1,10 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Literal, Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from api.errors import DomainError, not_found
@@ -57,14 +57,14 @@ async def submit_modal_guie_run(
     response: Response,
     model_file: UploadFile = File(description="上传的几何模型文件"),
     young_modulus: Annotated[float, Form(gt=0)] = 2.0e11,
-    poisson_tatio: Annotated[float, Form(gt=-1)] = 0.3,
+    poisson_ratio: Annotated[float, Form(gt=-1, lt=0.5)] = 0.3,
     density: Annotated[int, Form(gt=0)] = 7850,
     number_of_roots: Annotated[int, Form(ge=1)] = 10,
 ):
     settings = request.app.state.settings
     parameters = {
         "young_modulus": young_modulus,
-        "poisson_tatio": poisson_tatio,
+        "poisson_ratio": poisson_ratio,
         "density": density,
         "number_of_roots": number_of_roots,
     }
@@ -73,19 +73,18 @@ async def submit_modal_guie_run(
     submit_dir = paths.create_task_dir(settings, run_id)
     model = paths.model_path(submit_dir, filename)
     written = 0
-    with model.open("w") as targer:
+    # Binary mode: the uploaded geometry file must reach the worker byte-for-byte, and a text
+    # handle would raise TypeError on bytes chunks (and rewrite line endings on Windows).
+    with model.open("wb") as target:
         while chunk := await model_file.read(1024 * 1024):
             written += len(chunk)
             if written > settings.max_model_bytes:
                 raise DomainError("MODEL_TOO_LARGE", "上传的几何模型文件超过服务限制", 413)
-            targer.write(chunk)
+            target.write(chunk)
     if written == 0:
         raise DomainError("MODEL_EMPTY", "上传的几何模型为空", 422)
     parameters["model_filename"] = filename
-    try:
-        run = run_view(await store(request).submit(run_id, parameters))
-    except Exception:
-        raise
+    run = run_view(await store(request).submit(run_id, parameters))
     response.headers["Location"] = run.status_url
     return run
 

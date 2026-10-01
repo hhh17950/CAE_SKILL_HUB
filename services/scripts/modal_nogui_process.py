@@ -26,8 +26,8 @@ def get_params():
     ]
     for env_name, default, cast in spec:
         raw = os.getenv(env_name)
-        if raw if None:
-            if env_name == "GUIE_NODEL_PATH":
+        if raw is None:
+            if env_name == "GUIE_MODEL_PATH":
                 raise ValueError("模型路径不存在!")
             else:
                 params[env_name] = default

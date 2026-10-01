@@ -16,12 +16,12 @@ def main():
     rendered = json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     target = Path(__file__).resolve().parents[1] / "docs/contracts/openapi.json"
     if args.check:
-        if not target.exists() or target.read_text() != rendered:
+        if not target.exists() or target.read_text(encoding="utf-8") != rendered:
             raise SystemExit("OpenAPI is stale; run python -m scripts.export_openapi")
         print("OpenAPI matches implementation")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(rendered)
+    target.write_text(rendered, encoding="utf-8", newline="\n")
     print(target)
 
 

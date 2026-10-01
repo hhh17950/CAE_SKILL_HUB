@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,5 +20,15 @@ class Settings(BaseSettings):
     max_request_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     max_model_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
     mcp_enabled: bool = True
+    # /mcp 的 Host 白名单补充项，逗号分隔；CAE_PUBLIC_BASE_URL 的 host 自动加入，`*` 表示关闭校验。
+    mcp_allowed_hosts: str = ""
     # 用于把服务器本地图片路径转成智能体可下载的 URL。
     public_base_url: str = "http://0.0.0.0:8000"
+
+    @field_validator("guierunner_path", mode="before")
+    @classmethod
+    def _blank_guierunner_is_unset(cls, value):
+        """Compose passes an empty CAE_GUIERUNNER_PATH when the host variable is unset."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value

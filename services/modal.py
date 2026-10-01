@@ -6,13 +6,19 @@ from pathlib import Path
 
 from core.config import Settings
 
+SCRIPTS = Path(__file__).resolve().parent / "scripts"
+
 
 def command(settings: Settings) -> list[str]:
-    # Replace here with the confirmed guierunner command when integrating the real script.
-    modal_nogui_process_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "modal_nogui_process.py")
-    if settings.guierunner_path is not None:
-        return [str(settings.guierunner_path), "nogui", modal_nogui_process_path]
-    return [sys.executable, str(Path(__file__).parent / "scripts" / "modal_test.py")]
+    """The command for the modal flow.
+
+    ``CAE_GUIERUNNER_PATH`` is the real controlled launcher: it runs the flow script in nogui
+    mode. Without it the repository's example script runs instead, so the pipeline stays
+    exercisable locally; that script is not a CAE simulation.
+    """
+    if settings.guierunner_path is None:
+        return [sys.executable, str(SCRIPTS / "modal_test.py")]
+    return [str(settings.guierunner_path), "nogui", str(SCRIPTS / "modal_nogui_process.py")]
 
 
 def environment(parameters: dict) -> dict[str, str]:
@@ -24,7 +30,7 @@ def environment(parameters: dict) -> dict[str, str]:
         GUIE_CLOUD_INFO_DIR=str(run_dir / "cloud_info.json"),
         GUIE_MODEL_PATH=str(run_dir / "model" / parameters["model_filename"]),
         GUIE_YOUNG_MODULUS=str(parameters["young_modulus"]),
-        GUIE_POISSON_TATID=str(parameters["poisson_ratio"]),
+        GUIE_POISSON_TATIO=str(parameters["poisson_ratio"]),
         GUIE_DENSITY=str(parameters["density"]),
         GUIE_NUMBER_OF_ROOTS=str(parameters["number_of_roots"]),
         GUIE_TEST_SLEEP_SECONDS=str(parameters["test_sleep_seconds"]),

@@ -1,9 +1,10 @@
 alembic
 fastapi
+fastapi-mcp
 loguru
+mcp>=1.30,<2
 pydantic
 pydantic-settings
 sqlalchemy
 uvicorn
-fastapi-mcp
 vtk

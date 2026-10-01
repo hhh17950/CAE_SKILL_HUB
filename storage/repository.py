@@ -10,7 +10,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import func, insert, or_, select, text, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import OperationalError
 
 from storage.database import Database, run_in_thread
@@ -50,8 +50,8 @@ class RunRepository:
     async def close(self):
         await run_in_thread(self.database.close)
 
-    async def submit(self, parameters: dict) -> dict:
-        return await run_in_thread(self._submit, parameters)
+    async def submit(self, run_id: str, parameters: dict) -> dict:
+        return await run_in_thread(self._submit, run_id, parameters)
 
     def _submit(self, run_id: str, parameters: dict) -> dict:
         with self.database.sessions.begin() as session:

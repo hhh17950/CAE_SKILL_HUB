@@ -57,7 +57,7 @@ class GuieWorker:
             run_dir = paths.task_dir(self.settings, run_id)
             if not run_dir.is_dir():
                 raise ValueError("任务工作目录不存在或已被删除")
-            parameters["run_id"] = str(run_dir)
+            parameters["run_dir"] = str(run_dir)
             parameters["test_sleep_seconds"] = str(self.settings.test_sleep_seconds)
             parameters["test_exit_code"] = str(self.settings.test_exit_code)
             logger.info("START run_id={} cmd={} workdir={}", run_id, modal.command(self.settings), run_dir / "project")

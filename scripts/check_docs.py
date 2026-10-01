@@ -13,6 +13,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     files = [root / "README.md", *sorted((root / "docs").rglob("*.md"))]
     errors = []
+    examples = 0
     for file in files:
         body = file.read_text(encoding="utf-8")
         for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", body):
@@ -23,6 +24,7 @@ def main():
             if not (file.parent / relative).exists():
                 errors.append(f"{file.relative_to(root)}: missing link {relative}")
         for raw in re.findall(r"```json\s*\n(.*?)\n```", body, flags=re.S):
+            examples += 1
             try:
                 json.loads(raw)
             except (ValueError, TypeError) as exc:

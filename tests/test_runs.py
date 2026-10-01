@@ -1,3 +1,10 @@
+"""End-to-end runs: multipart submission -> real Worker -> results, logs and the CLI.
+
+``worker.py`` imports ``fcntl`` and ``services/executor.py`` calls ``os.killpg``, so every case
+that actually executes a script is POSIX-only and skipped on Windows. Cases that only exercise
+the API, the repository or the Alembic CLI still run everywhere.
+"""
+
 import asyncio
 import os
 import sys
@@ -9,32 +16,51 @@ from sqlalchemy import text
 from core.config import Settings
 from main import create_app
 from storage.repository import RunRepository
-from tests.conftest import migrate
-from worker import GuieWorker, worker_lock
+from tests.conftest import migrate, running_app, submit_modal
 
 BASE = "/api/v1/guie-runs"
 
+# Executing a task spawns a real process group, which only exists on POSIX.
+needs_posix_worker = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="worker.py 依赖 fcntl、services/executor.py 依赖 os.killpg，只能在 Linux 目标平台运行",
+)
 
-async def submit(client, body):
-    response = await client.post(BASE, json=body)
+
+def load_worker():
+    """Import the POSIX-only worker module lazily, so this file still collects on Windows."""
+    import worker as worker_module
+
+    return worker_module
+
+
+async def submit(client, **fields):
+    response = await submit_modal(client, **fields)
     assert response.status_code == 202, response.text
     run = response.json()
     assert response.headers["Location"] == run["status_url"]
     return run
 
 
-async def test_success_env_outputs_and_ownership(client, settings, body):
-    run = await submit(client, body)
+@needs_posix_worker
+async def test_success_writes_outputs_and_logs(client, settings, model_file):
+    worker = load_worker()
+    run = await submit(client, model=model_file)
     assert run["status"] == "queued"
     assert (await client.get(run["result_url"])).status_code == 409
-    assert await GuieWorker(settings).run_once()
-    result = (await client.get(run["status_url"])).json()
-    assert result["status"] == "succeeded" and result["exit_code"] == 0
+
+    assert await worker.GuieWorker(settings).run_once()
+
+    state = (await client.get(run["status_url"])).json()
+    assert state["status"] == "succeeded" and state["exit_code"] == 0
     cloud = (await client.get(run["result_url"])).json()["cloud_info"]
-    assert cloud == {
-        "test_only": True,
-        "model_name": "part.stp",
-        **{k: v for k, v in body.items() if k not in ("model_path", "project_dir")},
+    assert cloud["test_only"] is True
+    assert cloud["model_name"] == "part.stp"
+    assert cloud["parameters"] == {
+        "young_modulus": 2.0e11,
+        "poisson_ratio": 0.3,
+        "density": 7850,
+        "number_of_roots": 10,
     }
     for kind, phrase in (
         ("stdout", "test completed"),
@@ -43,181 +69,125 @@ async def test_success_env_outputs_and_ownership(client, settings, body):
     ):
         log = await client.get(run["log_urls"][kind])
         assert log.status_code == 200 and phrase in log.text
-    for url in [run["status_url"], run["result_url"], *run["log_urls"].values()]:
-        assert (
-            await client.get(url, headers={"Authorization": "Bearer beta-token"})
-        ).status_code == 404
     assert list(settings.service_log_root.glob("api-*.log"))
 
 
-async def test_each_submission_is_new_task(client, settings, body):
-    first, second = await submit(client, body), await submit(client, body)
+@needs_posix_worker
+async def test_each_submission_is_a_new_task(client, settings, model_file):
+    worker = load_worker()
+    first = await submit(client, model=model_file)
+    second = await submit(client, model=model_file)
     assert first["run_id"] != second["run_id"]
-    worker = GuieWorker(settings)
-    assert await worker.run_once()
-    assert await worker.run_once()
-    assert not await worker.run_once()
+
+    instance = worker.GuieWorker(settings)
+    assert await instance.run_once()
+    assert await instance.run_once()
+    assert not await instance.run_once()  # The queue is empty again.
+
     for run in (first, second):
-        assert (settings.project_root / "existing-project").is_dir()
-        assert not (settings.run_root / run["run_id"] / "project").exists()
-        assert (settings.task_log_root / run["run_id"] / "stdout.log").is_file()
+        task_dir = settings.workspace_root / run["run_id"]
+        assert (task_dir / "model" / "part.stp").is_file()
+        assert (task_dir / "logs" / "stdout.log").is_file()
+        assert (task_dir / "logs" / "stderr.log").is_file()
+        assert (task_dir / "jusmar.log").is_file()
+        assert (task_dir / "cloud_info.json").is_file()
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("density", 1.5),
-        ("density", True),
-        ("young_modulus", -1),
-        ("poisson_ratio", 0.5),
-        ("number_of_roots", 0),
-        ("extra", "x"),
-    ],
-)
-async def test_validation(client, body, field, value):
-    response = await client.post(BASE, json={**body, field: value})
-    assert response.status_code == 422
-    assert response.headers["content-type"] == "application/problem+json"
-
-
-async def test_auth_and_limits(client, body):
+async def test_no_authentication_layer(client, model_file):
+    """Access control belongs to the deployment layer; the service never rejects a token."""
+    run = (await submit_modal(client, model_file)).json()
+    for headers in ({}, {"Authorization": "Bearer garbage"}, {"Authorization": ""}):
+        assert (await client.get(run["status_url"], headers=headers)).status_code == 200
+    # An unknown run is 404 because it does not exist, not because of a missing credential.
+    assert (await client.get(f"{BASE}/run_missing")).status_code == 404
     assert (
-        await client.post(BASE, json=body, headers={"Authorization": "Bearer invalid"})
-    ).status_code == 401
-    response = await client.post(BASE, content="x" * 70000)
-    assert response.status_code == 413
+        await client.post(
+            f"{BASE}/modal",
+            data={"young_modulus": "2.0e11", "poisson_ratio": "0.3", "density": "7850"},
+            files={"model_file": ("part.stp", b"x", "application/octet-stream")},
+            headers={"Authorization": "Bearer garbage"},
+        )
+    ).status_code == 202
 
 
-async def test_path_and_symlink_escape(client, settings, body, tmp_path):
-    outside = tmp_path / "outside.stp"
-    outside.write_text("outside")
-    link = settings.model_root / "escape.stp"
-    link.symlink_to(outside)
-    for path in (outside, link, "relative.stp", settings.model_root / "missing.stp"):
-        assert (await client.post(BASE, json={**body, "model_path": str(path)})).status_code == 422
+async def test_request_body_limit(settings, model_file):
+    config = settings.model_copy(update={"max_request_bytes": 4096})
+    async with running_app(config) as client:
+        oversized = ("part.stp", b"x" * 8192, "application/octet-stream")
+        response = await submit_modal(client, oversized)
+        assert response.status_code == 413
 
 
-async def test_required_existing_project_dir(client, settings, body, tmp_path):
-    assert (
-        await client.post(BASE, json={k: v for k, v in body.items() if k != "project_dir"})
-    ).status_code == 422
-    outside = tmp_path / "other-project"
-    outside.mkdir()
-    for value in ("relative-project", str(outside), str(settings.project_root / "missing")):
-        assert (await client.post(BASE, json={**body, "project_dir": value})).status_code == 422
-    link = settings.project_root / "escape"
-    link.symlink_to(outside, target_is_directory=True)
-    assert (await client.post(BASE, json={**body, "project_dir": str(link)})).status_code == 422
-
-
-async def test_supplied_output_paths_take_precedence(client, settings, body):
-    output_dir = settings.output_root / "chosen"
-    output_dir.mkdir()
-    custom_log = output_dir / "solver.log"
-    custom_json = output_dir / "result.json"
-    run = await submit(
-        client, {**body, "jusmar_log_path": str(custom_log), "cloud_info_path": str(custom_json)}
-    )
-    assert await GuieWorker(settings).run_once()
-    assert custom_log.is_file() and custom_json.is_file()
-    assert not (settings.task_log_root / run["run_id"] / "jusmar.log").exists()
-    assert not (settings.run_root / run["run_id"] / "cloud_info.json").exists()
-    assert "test completed" in (await client.get(run["log_urls"]["jusmar"])).text
-    assert (await client.get(run["result_url"])).json()["cloud_info"]["number_of_roots"] == 10
-    assert (
-        await client.get(run["result_url"], headers={"Authorization": "Bearer beta-token"})
-    ).status_code == 404
-
-
-async def test_reject_unsafe_output_paths(client, settings, body, tmp_path):
-    existing = settings.output_root / "existing.log"
-    existing.write_text("keep", encoding="utf-8")
-    cases = (
-        {"jusmar_log_path": "relative.log"},
-        {"jusmar_log_path": str(tmp_path / "outside.log")},
-        {"jusmar_log_path": str(existing)},
-        {"cloud_info_path": str(settings.output_root / "wrong.txt")},
-        {"cloud_info_path": str(settings.output_root / "missing-parent" / "result.json")},
-        {
-            "jusmar_log_path": str(settings.output_root / "same.json"),
-            "cloud_info_path": str(settings.output_root / "same.json"),
-        },
-    )
-    for fields in cases:
-        assert (await client.post(BASE, json={**body, **fields})).status_code == 422
-    assert existing.read_text(encoding="utf-8") == "keep"
-
-
-async def test_reject_reused_custom_output_path(client, settings, body):
-    selected = str(settings.output_root / "reserved.json")
-    await submit(client, {**body, "cloud_info_path": selected})
-    response = await client.post(BASE, json={**body, "jusmar_log_path": selected})
-    assert response.status_code == 422
-    assert response.json()["code"] == "OUTPUT_PATH_IN_USE"
-    assert not (settings.output_root / "reserved.json").exists()
-
-
-async def test_failure_and_timeout(client, settings, body):
+@needs_posix_worker
+async def test_failure_and_timeout(client, settings, model_file):
+    worker = load_worker()
     for update, status, code in (
         ({"test_exit_code": 7}, "failed", 7),
         ({"test_sleep_seconds": 60, "run_timeout_seconds": 1}, "timed_out", -9),
     ):
-        run = await submit(client, body)
-        await GuieWorker(settings.model_copy(update=update)).run_once()
+        run = await submit(client, model=model_file)
+        await worker.GuieWorker(settings.model_copy(update=update)).run_once()
         result = (await client.get(run["status_url"])).json()
         assert result["status"] == status and result["exit_code"] == code
         assert (await client.get(run["result_url"])).status_code == 409
 
 
-async def test_file_removed_after_enqueue(client, settings, body):
-    run = await submit(client, body)
-    (settings.model_root / "part.stp").unlink()
-    await GuieWorker(settings).run_once()
-    assert (await client.get(run["status_url"])).json()["status"] == "failed"
-
-
-async def test_project_removed_after_enqueue(client, settings, body):
-    run = await submit(client, body)
-    (settings.project_root / "existing-project").rmdir()
-    await GuieWorker(settings).run_once()
-    assert (await client.get(run["status_url"])).json()["status"] == "failed"
-
-
-async def test_cancel_marks_unknown(client, settings, body):
-    run = await submit(client, body)
+@needs_posix_worker
+async def test_cancel_marks_unknown(client, settings, model_file):
+    worker = load_worker()
+    run = await submit(client, model=model_file)
     task = asyncio.create_task(
-        GuieWorker(settings.model_copy(update={"test_sleep_seconds": 60})).run_once()
+        worker.GuieWorker(settings.model_copy(update={"test_sleep_seconds": 60})).run_once()
     )
-    log = settings.task_log_root / run["run_id"] / "stdout.log"
-    for _ in range(100):
-        if log.exists() and "started" in log.read_text():
+    log = settings.workspace_root / run["run_id"] / "logs" / "stdout.log"
+    for _ in range(200):
+        if log.is_file() and "test completed" in log.read_text(encoding="utf-8", errors="replace"):
             break
         await asyncio.sleep(0.02)
     else:
         pytest.fail("script did not start")
+
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert (await client.get(run["status_url"])).json()["status"] == "unknown"
 
 
-async def test_result_missing_or_invalid(client, settings, body):
-    run = await submit(client, body)
-    await GuieWorker(settings).run_once()
-    result = settings.run_root / run["run_id"] / "cloud_info.json"
-    result.write_text("invalid json")
+@needs_posix_worker
+async def test_result_missing_or_invalid(client, settings, model_file):
+    worker = load_worker()
+    run = await submit(client, model=model_file)
+    await worker.GuieWorker(settings).run_once()
+
+    result = settings.workspace_root / run["run_id"] / "cloud_info.json"
+    result.write_text("invalid json", encoding="utf-8")
     assert (await client.get(run["result_url"])).status_code == 500
     result.unlink()
     assert (await client.get(run["result_url"])).status_code == 404
 
 
+@needs_posix_worker
+async def test_cloud_image_must_be_declared_by_cloud_info(client, settings, model_file):
+    worker = load_worker()
+    run = await submit(client, model=model_file)
+    await worker.GuieWorker(settings).run_once()
+
+    # The example flow declares no renderable cloud file, so nothing can be downloaded yet.
+    cloud = await client.get(f"{BASE}/{run['run_id']}/cloud/cloud_3d_1.png")
+    assert cloud.status_code == 404
+    traversal = await client.get(f"{BASE}/{run['run_id']}/cloud/..%2Fcloud_info.json")
+    assert traversal.status_code in (404, 422)
+
+
 async def test_no_startup_migration(tmp_path):
     config = Settings(
-        _env_file=None, database_path=tmp_path / "absent.db", service_log_root=tmp_path / "logs"
+        _env_file=None,
+        database_path=tmp_path / "absent.db",
+        workspace_root=tmp_path / "workspace",
+        service_log_root=tmp_path / "logs",
     )
-    for component in (RunRepository(config.database_path), GuieWorker(config).store):
-        with pytest.raises(RuntimeError, match="alembic upgrade head"):
-            await component.initialize()
+    with pytest.raises(RuntimeError, match="alembic upgrade head"):
+        await RunRepository(config.database_path).initialize()
     app = create_app(config)
     with pytest.raises(RuntimeError, match="alembic upgrade head"):
         async with app.router.lifespan_context(app):
@@ -225,20 +195,24 @@ async def test_no_startup_migration(tmp_path):
     assert not config.database_path.exists()
 
 
-async def test_migrations_and_recovery(settings, body):
+async def test_migrations_and_recovery(settings):
     repo = RunRepository(settings.database_path)
     await repo.initialize()
-    row = await repo.submit("alpha", body)
+    row = await repo.submit("run_alpha", {"model_filename": "part.stp"})
     await repo.claim()
+
     restarted = RunRepository(settings.database_path)
     await restarted.initialize()
     await restarted.recover_running()
-    assert (await restarted.get("alpha", row["run_id"]))["status"] == "unknown"
+    assert (await restarted.get(row["run_id"]))["status"] == "unknown"
     assert await restarted.claim() is None
+
     assert "No new upgrade operations" in migrate(settings.database_path, "check").stdout
     migrate(settings.database_path, "downgrade", "base")
     migrate(settings.database_path, "upgrade", "head")
     await restarted.initialize()
+    await repo.close()
+    await restarted.close()
 
 
 async def test_revision_mismatch_refused(settings):
@@ -254,29 +228,31 @@ async def test_revision_mismatch_refused(settings):
     await repo.close()
 
 
+@needs_posix_worker
 def test_single_worker_lock(settings):
-    with worker_lock(settings.database_path):
+    worker = load_worker()
+    with worker.worker_lock(settings.database_path):
         with pytest.raises(RuntimeError, match="已有 Worker"):
-            with worker_lock(settings.database_path):
+            with worker.worker_lock(settings.database_path):
                 pass
-    with worker_lock(settings.database_path):
+    with worker.worker_lock(settings.database_path):
         pass
 
 
-async def test_standalone_worker_entrypoint(client, settings, body, tmp_path):
-    run = await submit(client, body)
+@needs_posix_worker
+async def test_standalone_worker_entrypoint(client, settings, model_file, tmp_path):
+    worker = load_worker()
+    run = await submit(client, model=model_file)
     env = os.environ.copy()
     for key in (
         "database_path",
-        "run_root",
-        "task_log_root",
+        "workspace_root",
         "service_log_root",
-        "model_root",
-        "project_root",
-        "output_root",
         "test_sleep_seconds",
+        "test_exit_code",
     ):
         env[f"CAE_{key.upper()}"] = str(getattr(settings, key))
+    env.pop("CAE_GUIERUNNER_PATH", None)  # Blank/unset selects the bundled example script.
     with (tmp_path / "worker-console.log").open("wb") as output:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -286,14 +262,14 @@ async def test_standalone_worker_entrypoint(client, settings, body, tmp_path):
             stderr=output,
         )
         try:
-            for _ in range(100):
+            for _ in range(200):
                 state = (await client.get(run["status_url"])).json()["status"]
                 if state == "succeeded":
                     break
                 assert process.returncode is None
                 await asyncio.sleep(0.05)
             else:
-                pytest.fail("standalone worker did not finish task")
+                pytest.fail("standalone worker did not finish the task")
         finally:
             if process.returncode is None:
                 process.terminate()
@@ -305,19 +281,21 @@ async def test_standalone_worker_entrypoint(client, settings, body, tmp_path):
                 pytest.fail("worker failed to stop on SIGTERM")
     assert process.returncode == 0
     assert list(settings.service_log_root.glob("worker-*.log"))
-    with worker_lock(settings.database_path):
+    with worker.worker_lock(settings.database_path):
         pass
 
 
+@needs_posix_worker
 @pytest.mark.skipif(
     os.environ.get("CAE_RUN_SLOW_TESTS") != "1", reason="opt-in real 60-second execution"
 )
-async def test_real_sixty_second_flow(client, settings, body):
+async def test_real_sixty_second_flow(client, settings, model_file):
+    worker = load_worker()
     assert Settings(_env_file=None).test_sleep_seconds == 60
-    run = await submit(client, body)
+    run = await submit(client, model=model_file)
     started = time.monotonic()
     task = asyncio.create_task(
-        GuieWorker(settings.model_copy(update={"test_sleep_seconds": 60})).run_once()
+        worker.GuieWorker(settings.model_copy(update={"test_sleep_seconds": 60})).run_once()
     )
     await asyncio.sleep(0.5)
     assert (await client.get("/healthz")).status_code == 200

@@ -1,0 +1,9 @@
+# Vendored offline Swagger UI assets are verified byte-for-byte against the
+# SHA-256 digests in static/docs/manifest.json, so Git must never rewrite their
+# line endings: with core.autocrlf=true a Windows checkout turned them into CRLF
+# and broke tests/test_offline_docs.py::test_vendored_asset_checksums.
+static/docs/** -text
+
+# The deployment target is Linux, so shell entrypoints must stay LF even when the
+# repository is checked out on Windows.
+*.sh text eol=lf

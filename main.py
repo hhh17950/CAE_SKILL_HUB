@@ -1,5 +1,6 @@
 """FastAPI entry point for the single guie2 script flow."""
 
+import asyncio
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -20,20 +21,74 @@ from storage.repository import RunRepository
 
 logger = logging.getLogger(__name__)
 
+MCP_PATH = "/mcp"
+
+
+def load_mcp_server(settings: Settings):
+    """Return a fresh FastMCP server, or None when MCP is disabled or unusable.
+
+    The MCP module is imported here rather than inside the lifespan so the reason for a
+    missing /mcp route is reported at startup instead of at the first request.
+    """
+    if not settings.mcp_enabled:
+        return None
+    try:
+        from services.mcp_server import build_mcp_server
+    except ImportError as exc:
+        logger.error(
+            "CAE_MCP_ENABLED is set but the MCP dependency is unusable; %s is NOT mounted: %s",
+            MCP_PATH,
+            exc,
+        )
+        return None
+    return build_mcp_server(settings)
+
+
+async def serve_mcp_session_manager(server, ready: asyncio.Event, stop: asyncio.Event) -> None:
+    """Own the streamable HTTP session manager for as long as the API serves requests.
+
+    mount() never runs a sub-application lifespan, so the session manager would reject every
+    request unless it is started here. It runs in this dedicated task because an anyio cancel
+    scope must be entered and exited by the same task, while an ASGI lifespan generator may be
+    closed from another one (pytest-asyncio finalizes its client fixture that way).
+    """
+    try:
+        async with server.session_manager.run():
+            ready.set()
+            await stop.wait()
+    except Exception:  # pragma: no cover - startup/shutdown failure is reported, not raised
+        logger.exception("MCP session manager stopped unexpectedly")
+        ready.set()
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    mcp_server = load_mcp_server(settings)
+    # streamable_http_app() also creates the session manager the lifespan below starts.
+    mcp_asgi = mcp_server.streamable_http_app() if mcp_server is not None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         configure_logging(settings.service_log_root, "api")
         guie_store = RunRepository(settings.database_path)
+        stop_mcp = asyncio.Event()
+        mcp_task: asyncio.Task | None = None
         try:
             await guie_store.initialize()
             app.state.guie_store = guie_store
             logger.info("CAE guie2 test API started; launch the separate Worker")
+            if mcp_server is not None:
+                ready = asyncio.Event()
+                mcp_task = asyncio.create_task(
+                    serve_mcp_session_manager(mcp_server, ready, stop_mcp)
+                )
+                await ready.wait()
+                logger.info("MCP server mounted at %s", MCP_PATH)
             yield
         finally:
+            if mcp_task is not None:
+                stop_mcp.set()
+                await mcp_task
             await guie_store.close()
 
     app = FastAPI(
@@ -74,14 +129,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     install_openapi(app)
-    if settings.mcp_enabled:
-        try:
-            from services.mcp_server import fastmcp_app as _mcp
-
-            app.mount("/mcp", _mcp.streamable_http_app())
-            logger.info("MCP server mounted as /mcp")
-        except ImportError:
-            logger.error("CAE_MCP_ENABLED is set but the `mcp` dependency is missing; /mcp is NOT mounted")
+    if mcp_asgi is not None:
+        # The FastMCP app already routes MCP_PATH internally, so mounting it under MCP_PATH
+        # again would expose MCP_PATH + MCP_PATH instead. Mounted last at the root, it only
+        # sees requests that no earlier route matched.
+        app.mount("/", mcp_asgi)
     return app
 
 

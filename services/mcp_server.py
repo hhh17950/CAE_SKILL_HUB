@@ -6,26 +6,52 @@ import binascii
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from core.config import Settings
 from services import paths
 from storage.repository import RunRepository
 
-fastmcp_app = FastMCP("茉莉平台CAE仿真")
+SERVER_NAME = "茉莉平台CAE仿真"
+# Host values the MCP transport always accepts, matching the SDK defaults for local use.
+LOCAL_HOSTS = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", "[::1]", "[::1]:*"]
+
+
+def transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Allow the deployment host to reach /mcp; the SDK rejects unknown Host headers (421).
+
+    CAE_PUBLIC_BASE_URL 的 host 会自动加入白名单；需要额外 host 时用逗号分隔的
+    CAE_MCP_ALLOWED_HOSTS 补充，值为 ``*`` 表示关闭该校验（内网自有网络下才建议）。
+    """
+    configured = [item.strip() for item in settings.mcp_allowed_hosts.split(",") if item.strip()]
+    if "*" in configured:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    allowed = list(LOCAL_HOSTS)
+    public = urlparse(settings.public_base_url)
+    if public.netloc:
+        allowed.append(public.netloc)
+    if public.hostname:
+        allowed.append(f"{public.hostname}:*")
+    allowed.extend(configured)
+    return TransportSecuritySettings(allowed_hosts=allowed)
+
+
+def build_mcp_server(settings: Settings) -> FastMCP:
+    """Build a fresh MCP server; its session manager may only be run once per instance."""
+    server = FastMCP(SERVER_NAME, transport_security=transport_security(settings))
+    for tool in (submit_modal_run, get_run_status, get_run_result, get_run_log):
+        server.tool()(tool)
+    return server
 
 
 def _repo(settings: Settings) -> RunRepository:
     return RunRepository(settings.database_path)
 
 
-def _task_record(repo: RunRepository, run_id: str) -> dict:
-    return asyncio.run(repo.get(run_id))
-
-
-@fastmcp_app.tool()
 async def submit_modal_run(
     model_b64: str,
     model_filename: str,
@@ -45,7 +71,7 @@ async def submit_modal_run(
         model_filename (str): 模型文件名（如 modal.stp），仅用于服务端保存命名（必填）
         number_of_roots (int): 模态阶数，>= 1. Defaults to 10.
         young_modulus (float): 杨氏模量. Defaults to 2.0e11.
-        poisson_ratio (float): 泊松比. Defaults to 0.3.
+        poisson_ratio (float): 泊松比，取值 (-1, 0.5). Defaults to 0.3.
         density (int): 密度. Defaults to 7850.
 
     当用户未提供物理参数时使用上述默认值（钢材料）；不同材料请传入对应值。
@@ -56,8 +82,8 @@ async def submit_modal_run(
     # 参数校验（与 HTTP 路由的约束保持一致）
     if young_modulus <= 0:
         raise ValueError("young_modulus 必须 > 0")
-    if not (-1 < poisson_ratio < 1):
-        raise ValueError("poisson_tatio 必须满足 -1 < ratio < 1")
+    if not (-1 < poisson_ratio < 0.5):
+        raise ValueError("poisson_ratio 必须满足 -1 < ratio < 0.5")
     if density <= 0:
         raise ValueError("density 必须 > 0")
     if number_of_roots < 1:
@@ -101,7 +127,6 @@ async def submit_modal_run(
     }
 
 
-@fastmcp_app.tool()
 async def get_run_status(run_id: str) -> dict[str, Any]:
     """查询"茉莉平台 - 结构模态案例仿真流程"任务的状态。
 
@@ -126,7 +151,6 @@ async def get_run_status(run_id: str) -> dict[str, Any]:
     }
 
 
-@fastmcp_app.tool()
 async def get_run_result(run_id: str) -> dict[str, Any]:
     """读取已完成的"茉莉平台 - 结构模态案例仿真流程"任务的结果。
 
@@ -157,7 +181,7 @@ async def get_run_result(run_id: str) -> dict[str, Any]:
         raise ValueError("结果文件不是有效 JSON") from exc
 
     if isinstance(cloud_info, dict):
-        base = settings.public_base_url.rsplit("/")
+        base = settings.public_base_url.rstrip("/")
         for entry in cloud_info.values():
             if isinstance(entry, dict) and entry.get("cloud_file_name"):
                 filename = Path(entry["cloud_file_name"]).name
@@ -166,7 +190,6 @@ async def get_run_result(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "exit_code": row["exit_code"], "cloud_info": cloud_info}
 
 
-@fastmcp_app.tool()
 async def get_run_log(run_id: str, kind: str) -> str:
     """读取"茉莉平台 - 结构模态案例仿真流程"任务日志内容，kind 可取 stdout / stderr / jusmar。
 

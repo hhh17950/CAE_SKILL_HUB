@@ -1,6 +1,46 @@
 {
   "components": {
     "schemas": {
+      "Body_submit_modal_guie_run": {
+        "properties": {
+          "density": {
+            "default": 7850,
+            "exclusiveMinimum": 0.0,
+            "title": "Density",
+            "type": "integer"
+          },
+          "model_file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "上传的几何模型文件",
+            "title": "Model File",
+            "type": "string"
+          },
+          "number_of_roots": {
+            "default": 10,
+            "minimum": 1.0,
+            "title": "Number Of Roots",
+            "type": "integer"
+          },
+          "poisson_ratio": {
+            "default": 0.3,
+            "exclusiveMaximum": 0.5,
+            "exclusiveMinimum": -1.0,
+            "title": "Poisson Ratio",
+            "type": "number"
+          },
+          "young_modulus": {
+            "default": 200000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Young Modulus",
+            "type": "number"
+          }
+        },
+        "required": [
+          "model_file"
+        ],
+        "title": "Body_submit_modal_guie_run",
+        "type": "object"
+      },
       "ErrorItem": {
         "additionalProperties": false,
         "properties": {
@@ -18,76 +58,6 @@
           "reason"
         ],
         "title": "ErrorItem",
-        "type": "object"
-      },
-      "GuieRunRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "cloud_info_path": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cloud Info Path"
-          },
-          "density": {
-            "exclusiveMinimum": 0.0,
-            "title": "Density",
-            "type": "integer"
-          },
-          "jusmar_log_path": {
-            "anyOf": [
-              {
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Jusmar Log Path"
-          },
-          "model_path": {
-            "minLength": 1,
-            "title": "Model Path",
-            "type": "string"
-          },
-          "number_of_roots": {
-            "minimum": 1.0,
-            "title": "Number Of Roots",
-            "type": "integer"
-          },
-          "poisson_ratio": {
-            "exclusiveMaximum": 0.5,
-            "exclusiveMinimum": -1.0,
-            "title": "Poisson Ratio",
-            "type": "number"
-          },
-          "project_dir": {
-            "minLength": 1,
-            "title": "Project Dir",
-            "type": "string"
-          },
-          "young_modulus": {
-            "exclusiveMinimum": 0.0,
-            "title": "Young Modulus",
-            "type": "number"
-          }
-        },
-        "required": [
-          "model_path",
-          "project_dir",
-          "young_modulus",
-          "poisson_ratio",
-          "density",
-          "number_of_roots"
-        ],
-        "title": "GuieRunRequest",
         "type": "object"
       },
       "GuieRunView": {
@@ -243,12 +213,6 @@
         "title": "Problem",
         "type": "object"
       }
-    },
-    "securitySchemes": {
-      "HTTPBearer": {
-        "scheme": "bearer",
-        "type": "http"
-      }
     }
   },
   "info": {
@@ -258,14 +222,14 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/v1/guie-runs": {
+    "/api/v1/guie-runs/modal": {
       "post": {
-        "operationId": "submit_guie_run",
+        "operationId": "submit_modal_guie_run",
         "requestBody": {
           "content": {
-            "application/json": {
+            "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/GuieRunRequest"
+                "$ref": "#/components/schemas/Body_submit_modal_guie_run"
               }
             }
           },
@@ -343,12 +307,7 @@
             "description": "Internal Server Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Submit Guie Run",
+        "summary": "Submit Modal Guie Run",
         "tags": [
           "guie-runs"
         ]
@@ -440,12 +399,107 @@
             "description": "Internal Server Error"
           }
         },
-        "security": [
+        "summary": "Get Guie Run",
+        "tags": [
+          "guie-runs"
+        ]
+      }
+    },
+    "/api/v1/guie-runs/{run_id}/cloud/{filename}": {
+      "get": {
+        "description": "通过 cloud_info.json 把文件名映射到真实路径，然后返回该图片文件。\n\n只允许读取当前任务 cloud_info.json 中真实声明的 cloud_file_name，\nfilename 必须匹配 basename，杜绝路径遍历。智能体拿到 URL 后自行下载。",
+        "operationId": "get_guie_cloud_image",
+        "parameters": [
           {
-            "HTTPBearer": []
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
           }
         ],
-        "summary": "Get Guie Run",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get Guie Cloud Image",
         "tags": [
           "guie-runs"
         ]
@@ -549,11 +603,6 @@
             "description": "Internal Server Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Get Guie Log",
         "tags": [
           "guie-runs"
@@ -644,11 +693,6 @@
             "description": "Internal Server Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Get Guie Results",
         "tags": [
           "guie-runs"
