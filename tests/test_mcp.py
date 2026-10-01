@@ -4,13 +4,16 @@ Every regression here was observed in a real deployment or reproduction:
 
 * ``mcp`` was missing from requirements.txt, so the import failed and /mcp silently
   disappeared (the ImportError was swallowed while the REST API kept serving).
-* mounting the FastMCP app under its own internal path exposed /mcp/mcp;
+* mounting the MCP app under its own internal path exposed /mcp/mcp;
 * ``app.mount()`` never runs a sub-application lifespan, so the streamable HTTP session
   manager answered every request with 500 until the host lifespan started it;
-* the SDK rejects unknown Host headers (421), which blocks the LAN address the service
-  is actually reached at.
+* the SDK rejects unknown Host headers (421), which used to block the LAN address the service
+  is actually reached at; Host validation is now disabled outright (see the test below);
+* the mcp 2.x line removed ``mcp.server.fastmcp``, so a 1.x-style import left the endpoint
+  unmounted; the last test drives the endpoint with the real client from the pinned SDK.
 """
 
+import importlib.metadata
 import importlib.util
 import json
 from contextlib import asynccontextmanager
@@ -23,6 +26,15 @@ from main import MCP_PATH, create_app
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("mcp") is None, reason="mcp SDK unavailable"
 )
+
+
+def mcp_major_version() -> int:
+    """0 when the SDK is missing; the client API used below only exists in the 2.x line."""
+    try:
+        return int(importlib.metadata.version("mcp").split(".")[0])
+    except importlib.metadata.PackageNotFoundError:
+        return 0
+
 
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
 INITIALIZE = {
@@ -108,21 +120,21 @@ async def test_api_routes_keep_serving_next_to_the_mcp_mount(settings):
         assert (await client.get("/api/v1/guie-runs/run_missing")).status_code == 404
 
 
-async def test_public_base_url_host_is_allowed(settings):
-    config = settings.model_copy(update={"public_base_url": "http://cae.example:9000"})
-    async with running_app(config, base_url="http://cae.example:9000") as client:
-        assert (await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)).status_code == 200
-
-
-async def test_extra_allowed_host_is_accepted(settings):
-    config = settings.model_copy(update={"mcp_allowed_hosts": "192.168.16.128:8000"})
-    async with running_app(config, base_url="http://192.168.16.128:8000") as client:
-        assert (await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)).status_code == 200
-
-
-async def test_unknown_host_is_refused(settings):
-    async with running_app(settings, base_url="http://attacker.example") as client:
-        assert (await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)).status_code == 421
+async def test_any_host_header_reaches_the_endpoint(settings):
+    """Host validation is deliberately off: the SDK would answer 421 for every address except
+    localhost and CAE_PUBLIC_BASE_URL, which breaks intranet callers that use a different
+    address (IP instead of domain, another port, a reverse proxy) and never acted as access
+    control anyway. Deployment-layer controls are what protect this endpoint.
+    """
+    for base_url in (
+        "http://127.0.0.1",
+        "http://192.168.16.128:8000",
+        "http://cae.example:9000",
+        "http://attacker.example",
+    ):
+        async with running_app(settings, base_url=base_url) as client:
+            response = await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)
+            assert response.status_code == 200, f"{base_url}: {response.status_code}"
 
 
 async def test_disabled_flag_mounts_nothing(settings):
@@ -130,3 +142,31 @@ async def test_disabled_flag_mounts_nothing(settings):
     async with running_app(config) as client:
         assert (await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)).status_code == 404
         assert (await client.get("/healthz")).status_code == 200
+
+
+@pytest.mark.skipif(mcp_major_version() < 2, reason="needs the mcp 2.x client API")
+async def test_official_client_can_complete_the_handshake(settings):
+    """The SDK the agent platform actually uses must be able to drive /mcp end to end."""
+    import httpx2
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        # httpx2 is what mcp 2.x uses for HTTP; ASGITransport keeps the test socket-free.
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app), base_url="http://127.0.0.1"
+        ) as http_client:
+            async with streamable_http_client(
+                f"http://127.0.0.1{MCP_PATH}", http_client=http_client
+            ) as (read, write):
+                async with ClientSession(read, write) as session:
+                    handshake = await session.initialize()
+                    assert handshake.server_info.name
+                    listed = await session.list_tools()
+                    assert {tool.name for tool in listed.tools} == {
+                        "submit_modal_run",
+                        "get_run_status",
+                        "get_run_result",
+                        "get_run_log",
+                    }

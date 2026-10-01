@@ -60,7 +60,12 @@ class GuieWorker:
             parameters["run_dir"] = str(run_dir)
             parameters["test_sleep_seconds"] = str(self.settings.test_sleep_seconds)
             parameters["test_exit_code"] = str(self.settings.test_exit_code)
-            logger.info("START run_id={} cmd={} workdir={}", run_id, modal.command(self.settings), run_dir / "project")
+            logger.info(
+                "START run_id={} cmd={} workdir={}",
+                run_id,
+                modal.command(self.settings),
+                run_dir / "project",
+            )
             result = await execute(
                 modal.command(self.settings),
                 modal.environment(parameters),
@@ -77,7 +82,10 @@ class GuieWorker:
                 status, error = "failed", "脚本退出码非 0"
             logger.info(
                 "DONE run_id={}, status={}, exit_code={}, elapsed={:.2f}s",
-                run_id, status, result.exit_code, elapsed,
+                run_id,
+                status,
+                result.exit_code,
+                elapsed,
             )
             if status == "succeeded":
                 try:
@@ -96,7 +104,11 @@ class GuieWorker:
             await self.store.finish(run_id, status, result.exit_code, error)
             logger.info(
                 "FINISH run_id={} status={} exit_code={} error={} elapsed={:.2f}s",
-                run_id, status, result.exit_code, error, time.monotonic() - started_at,
+                run_id,
+                status,
+                result.exit_code,
+                error,
+                time.monotonic() - started_at,
             )
         except asyncio.CancelledError:
             await self.store.finish(run_id, "unknown", None, "Worker 被中断，需人工核对")

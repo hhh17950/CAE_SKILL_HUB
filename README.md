@@ -1,6 +1,6 @@
 # CAE SkillHub · 719 流程执行服务
 
-将固定 CAE 自动化脚本暴露成异步任务接口：上传几何模型 → 返回 `run_id` → Worker 执行 → 查询状态、日志与结果。调用方用 multipart 上传模型文件，任务目录由服务在 `CAE_WORKSPACE_ROOT` 下按 `run_id` 创建，不接受调用方指定的服务端路径。提供 HTTP/OpenAPI 与 MCP（`/mcp`）两种接入方式。执行依赖外部受控启动器 `CAE_GUIERUNNER_PATH`，它负责运行仓库内的流程脚本 `services/scripts/modal_nogui_process.py`；未配置启动器时任务无法执行。
+将固定 CAE 自动化脚本暴露成异步任务接口：上传几何模型 → 返回 `run_id` → Worker 执行 → 查询状态、日志与结果。调用方用 multipart 上传模型文件，任务目录由服务在 `CAE_WORKSPACE_ROOT` 下按 `run_id` 创建，不接受调用方指定的服务端路径。提供 HTTP/OpenAPI 与 MCP（`/mcp`）两种接入方式。执行默认使用外部受控启动器 `CAE_GUIERUNNER_PATH`，它负责运行仓库内的流程脚本 `services/scripts/modal_nogui_process.py`；未配置启动器时回退到仓库自带的示例脚本 `services/scripts/modal_test.py`（只回显参数、写占位结果，不是真实 CAE 仿真）。
 
 运行目标：Linux、Python 3.10。开发验证使用 Python 3.10.11。无需 Redis、Celery、uv 或 Agent 编排框架。
 
@@ -35,7 +35,7 @@ PIP_CONFIG_FILE=/dev/null python -m pip --isolated install --index-url https://p
 cp .env.example .env
 ```
 
-编辑 `.env`：至少确认 `CAE_WORKSPACE_ROOT`、`CAE_DATABASE_PATH`、`CAE_SERVICE_LOG_ROOT` 指向本机可写目录；要真正执行流程还需设置 `CAE_GUIERUNNER_PATH`。API 和 Worker 使用同一份配置。手动初始化数据库并启动 API：
+编辑 `.env`：至少确认 `CAE_WORKSPACE_ROOT`、`CAE_DATABASE_PATH`、`CAE_SERVICE_LOG_ROOT` 指向本机可写目录；要执行真实流程还需设置 `CAE_GUIERUNNER_PATH`（不设置时用仓库自带示例脚本跑通链路）。API 和 Worker 使用同一份配置。手动初始化数据库并启动 API：
 
 ```bash
 python -m alembic upgrade head

@@ -6,10 +6,9 @@ import binascii
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from uuid import uuid4
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from core.config import Settings
@@ -17,35 +16,34 @@ from services import paths
 from storage.repository import RunRepository
 
 SERVER_NAME = "茉莉平台CAE仿真"
-# Host values the MCP transport always accepts, matching the SDK defaults for local use.
-LOCAL_HOSTS = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", "[::1]", "[::1]:*"]
+# The service is deployed inside one intranet with no authentication of its own (access control
+# belongs to the deployment layer: reverse proxy, firewall, directory permissions). The SDK's
+# Host check would only decide which addresses may reach /mcp and answers 421 otherwise, which
+# breaks every caller that uses an address other than CAE_PUBLIC_BASE_URL. It also does not act
+# as access control: any host on the network can already POST to this endpoint directly.
+DISABLED_TRANSPORT_SECURITY = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 
-def transport_security(settings: Settings) -> TransportSecuritySettings:
-    """Allow the deployment host to reach /mcp; the SDK rejects unknown Host headers (421).
-
-    CAE_PUBLIC_BASE_URL 的 host 会自动加入白名单；需要额外 host 时用逗号分隔的
-    CAE_MCP_ALLOWED_HOSTS 补充，值为 ``*`` 表示关闭该校验（内网自有网络下才建议）。
-    """
-    configured = [item.strip() for item in settings.mcp_allowed_hosts.split(",") if item.strip()]
-    if "*" in configured:
-        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    allowed = list(LOCAL_HOSTS)
-    public = urlparse(settings.public_base_url)
-    if public.netloc:
-        allowed.append(public.netloc)
-    if public.hostname:
-        allowed.append(f"{public.hostname}:*")
-    allowed.extend(configured)
-    return TransportSecuritySettings(allowed_hosts=allowed)
-
-
-def build_mcp_server(settings: Settings) -> FastMCP:
+def build_mcp_server(settings: Settings) -> MCPServer:
     """Build a fresh MCP server; its session manager may only be run once per instance."""
-    server = FastMCP(SERVER_NAME, transport_security=transport_security(settings))
+    server = MCPServer(SERVER_NAME)
     for tool in (submit_modal_run, get_run_status, get_run_result, get_run_log):
         server.tool()(tool)
     return server
+
+
+def http_app(server: MCPServer, settings: Settings):
+    """The Streamable HTTP ASGI app for this server; it also creates its session manager.
+
+    mcp 2.x takes the transport settings here instead of in the constructor; the SDK default
+    request body cap (4 MiB) is raised to CAE_MAX_REQUEST_BYTES, because a geometry model is
+    sent as Base64 through this transport and would otherwise be rejected before our own
+    CAE_MAX_MODEL_BYTES check runs.
+    """
+    return server.streamable_http_app(
+        transport_security=DISABLED_TRANSPORT_SECURITY,
+        max_request_body_size=settings.max_request_bytes,
+    )
 
 
 def _repo(settings: Settings) -> RunRepository:
@@ -63,7 +61,7 @@ async def submit_modal_run(
     """提交一个"茉莉平台 - 结构模态案例仿真流程"任务。
 
     本服务（茉莉平台CAE仿真）只处理茉莉平台内的仿真流程，与服务器上其他开发者提供的
-    独立仿真服务（如ansys等）无关。判断依据：计算与"模态 / 固有频率 / 振型 / 
+    独立仿真服务（如ansys等）无关。判断依据：计算与"模态 / 固有频率 / 振型 /
     特征频率"相关的结构分析时，使用本工具。
 
     参数:

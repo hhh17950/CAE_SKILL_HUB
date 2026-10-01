@@ -27,7 +27,11 @@ def run(*args, runtime_dir):
 
 def test_launcher_is_syntactically_valid():
     result = subprocess.run(
-        ["bash", "-n", str(SCRIPT)], capture_output=True, text=True, encoding="utf-8", errors="replace"
+        ["bash", "-n", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0, result.stderr
 

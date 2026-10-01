@@ -1,8 +1,7 @@
 alembic
 fastapi
-fastapi-mcp
 loguru
-mcp>=1.30,<2
+mcp>=2.2,<3
 pydantic
 pydantic-settings
 sqlalchemy

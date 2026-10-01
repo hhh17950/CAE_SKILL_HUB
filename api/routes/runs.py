@@ -51,7 +51,9 @@ def run_view(row: dict) -> GuieRunView:
     )
 
 
-@router.post("/modal", response_model=GuieRunView, status_code=202, operation_id="submit_modal_guie_run")
+@router.post(
+    "/modal", response_model=GuieRunView, status_code=202, operation_id="submit_modal_guie_run"
+)
 async def submit_modal_guie_run(
     request: Request,
     response: Response,
@@ -149,9 +151,7 @@ async def get_guie_results(run_id: str, request: Request):
 
 
 @router.get("/{run_id}/logs/{kind}", operation_id="get_guie_log")
-async def get_guie_log(
-    kind: Literal["stdout", "stderr", "jusmar"], run_id: str, request: Request
-):
+async def get_guie_log(kind: Literal["stdout", "stderr", "jusmar"], run_id: str, request: Request):
     submit_dir = paths.task_dir(request.app.state.settings, run_id)
     path = paths.stdout_log(submit_dir) if kind == "stdout" else paths.stderr_log(submit_dir)
     if kind == "jusmar":

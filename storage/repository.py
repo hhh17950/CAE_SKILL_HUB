@@ -77,9 +77,7 @@ class RunRepository:
     def _get(self, run_id: str) -> dict | None:
         with self.database.sessions() as session:
             row = (
-                session.execute(
-                    select(guie_runs).where(guie_runs.c.run_id == run_id)
-                )
+                session.execute(select(guie_runs).where(guie_runs.c.run_id == run_id))
                 .mappings()
                 .one_or_none()
             )

@@ -25,7 +25,7 @@ MCP_PATH = "/mcp"
 
 
 def load_mcp_server(settings: Settings):
-    """Return a fresh FastMCP server, or None when MCP is disabled or unusable.
+    """Return ``(server, asgi_app)`` for /mcp, or None when MCP is disabled or unusable.
 
     The MCP module is imported here rather than inside the lifespan so the reason for a
     missing /mcp route is reported at startup instead of at the first request.
@@ -33,7 +33,7 @@ def load_mcp_server(settings: Settings):
     if not settings.mcp_enabled:
         return None
     try:
-        from services.mcp_server import build_mcp_server
+        from services.mcp_server import build_mcp_server, http_app
     except ImportError as exc:
         logger.error(
             "CAE_MCP_ENABLED is set but the MCP dependency is unusable; %s is NOT mounted: %s",
@@ -41,7 +41,9 @@ def load_mcp_server(settings: Settings):
             exc,
         )
         return None
-    return build_mcp_server(settings)
+    server = build_mcp_server(settings)
+    # streamable_http_app() also creates the session manager the lifespan below starts.
+    return server, http_app(server, settings)
 
 
 async def serve_mcp_session_manager(server, ready: asyncio.Event, stop: asyncio.Event) -> None:
@@ -63,9 +65,8 @@ async def serve_mcp_session_manager(server, ready: asyncio.Event, stop: asyncio.
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    mcp_server = load_mcp_server(settings)
-    # streamable_http_app() also creates the session manager the lifespan below starts.
-    mcp_asgi = mcp_server.streamable_http_app() if mcp_server is not None else None
+    mcp = load_mcp_server(settings)
+    mcp_server, mcp_asgi = mcp if mcp is not None else (None, None)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -130,7 +131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     install_openapi(app)
     if mcp_asgi is not None:
-        # The FastMCP app already routes MCP_PATH internally, so mounting it under MCP_PATH
+        # The MCP app already routes MCP_PATH internally, so mounting it under MCP_PATH
         # again would expose MCP_PATH + MCP_PATH instead. Mounted last at the root, it only
         # sees requests that no earlier route matched.
         app.mount("/", mcp_asgi)

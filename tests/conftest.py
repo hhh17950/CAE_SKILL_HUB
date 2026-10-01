@@ -70,9 +70,7 @@ async def running_app(settings):
     """Run the real lifespan (store version check + MCP task) around an ASGI client."""
     app = create_app(settings)
     async with app.router.lifespan_context(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
 
 
