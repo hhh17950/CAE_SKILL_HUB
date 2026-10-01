@@ -72,6 +72,8 @@ start / restart 选项:
   CAE_API_HOST / CAE_API_PORT
   CAE_START_TIMEOUT_SECONDS 等待 API 就绪的秒数，默认 30
   CAE_STOP_TIMEOUT_SECONDS  等待进程退出的秒数，默认 45
+  CAE_MESA_LIB_PATH         云图渲染所需 Mesa/OpenGL 库目录；留空则依次探测 SSTA_CAE_PATH
+                            下的 mesa/lib 与 /opt/mesa/lib（默认值也从 .env 读取）
 
 说明:
   API 与 Worker 共用同一份 .env，均在项目根目录启动。
@@ -80,6 +82,7 @@ start / restart 选项:
   监听地址 --host（默认 0.0.0.0）决定谁能连上：0.0.0.0 接受其他机器，127.0.0.1 只接受本机。
   .env 里的 CAE_PUBLIC_BASE_URL 只用于拼云图 URL，必须是调用方能访问到的地址，
   不能填 0.0.0.0（监听地址，不可访问）或 127.0.0.1（回环，只有本机）。
+  启动时会自动把 Mesa 库目录加进 LD_LIBRARY_PATH（云图渲染需要），找不到时会告警。
 TEXT
 }
 
@@ -221,7 +224,7 @@ warn_about_public_base_url() {
   esac
 }
 
-# The addresses another machine can use to reach the API. Every IPv4 the host reports is listed,
+# The address another machine can use to reach the API. Every IPv4 the host reports is listed,
 # because the first one is often a container bridge (172.17.x.x) rather than the address callers
 # use. Prints nothing on a host where `hostname -I` is unavailable.
 reachable_urls() {
@@ -231,6 +234,42 @@ reachable_urls() {
     out="$out http://$ip:$API_PORT"
   done
   printf '%s' "${out# }"
+}
+
+# VTK renders the cloud images and needs Mesa's libGL, which is not in the loader's default search
+# path. LD_LIBRARY_PATH has to be in place before the process starts (dlopen resolves it from the
+# process environment), so it is exported here rather than configured from inside the app.
+mesa_lib_path() {
+  local configured ssta candidate
+  configured="$(env_value CAE_MESA_LIB_PATH)"
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  ssta="$(env_value SSTA_CAE_PATH)"
+  for candidate in ${ssta:+"$ssta/mesa/lib"} /opt/mesa/lib; do
+    if [ -d "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+}
+
+# Prepend the Mesa lib directory for the processes started from here. Silent when none is found:
+# the flow may not need it at all (the example script does not render anything).
+export_mesa_library_path() {
+  local mesa
+  mesa="$(mesa_lib_path)"
+  if [ -z "$mesa" ]; then
+    warn "未找到 Mesa/OpenGL 库目录（CAE_MESA_LIB_PATH 未设置，SSTA_CAE_PATH/mesa/lib 与 /opt/mesa/lib 都不存在）；"
+    warn "若云图生成失败或超时，请把 CAE_MESA_LIB_PATH 设为 libGL 所在目录"
+    return 0
+  fi
+  case ":${LD_LIBRARY_PATH:-}:" in
+    *":$mesa:"*) ;;
+    *) export LD_LIBRARY_PATH="$mesa${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+  esac
+  log "LD_LIBRARY_PATH 已包含 Mesa 库目录 $mesa"
 }
 
 process_uptime() { ps -o etime= -p "$1" 2>/dev/null | tr -d ' '; }
@@ -321,6 +360,7 @@ run_foreground() {
 cmd_start() {
   preflight
   warn_about_public_base_url
+  export_mesa_library_path
   stale_pid_file "$API_PID_FILE" API
   stale_pid_file "$WORKER_PID_FILE" Worker
 

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     test_exit_code: int = Field(default=0, ge=0, le=255)
     worker_poll_seconds: float = Field(default=0.2, ge=0.02, le=30)
     run_timeout_seconds: float = Field(default=300, ge=1, le=86400)
+    # 云图渲染单独设超时：它在独立进程里跑（VTK 需要可用的 OpenGL/Mesa，缺库时会卡住或直接崩溃），
+    # 没有这一步的保护，任务会永远停在 running。与 run_timeout_seconds 一样可配。
+    cloud_timeout_seconds: float = Field(default=300, ge=1, le=86400)
     max_request_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     max_model_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
     mcp_enabled: bool = True

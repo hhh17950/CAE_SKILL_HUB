@@ -195,7 +195,7 @@ def main():
 
     # 4.1设置属性表实体集
     set_cell_result = my_simulation.set_dataitem(
-        os.path.join(property_3d_path, "cell_id", newpids)
+        os.path.join(property_3d_path, "cell_id"), newpids
     )
     check_result(set_cell_result, "设置属性表实体集", "done")
 

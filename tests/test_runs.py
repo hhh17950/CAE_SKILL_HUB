@@ -6,6 +6,7 @@ the API, the repository or the Alembic CLI still run everywhere.
 """
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -169,6 +170,47 @@ async def test_cancel_marks_unknown(client, settings, model_file):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert (await client.get(run["status_url"])).json()["status"] == "unknown"
+
+
+@needs_posix_worker
+async def test_cloud_render_timeout_fails_the_run(client, settings, model_file, monkeypatch):
+    """A cloud render that hangs must end as ``failed``, never leave the run ``running`` forever.
+
+    Rendering runs as its own process because it needs Mesa's libGL. Before that, a VTK crash killed
+    the Worker with the run still marked running, and a plain hang was equally unrecoverable; the
+    configurable timeout is what turns either case into a status the caller can act on.
+    """
+    from services import cloud_png
+
+    worker = load_worker()
+    run = await submit(client, model=model_file)
+    run_dir = settings.workspace_root.resolve() / run["run_id"]
+    cloud_dir = run_dir / "project" / "cloud_png"
+    (run_dir / "cloud_info.json").write_text(
+        json.dumps(
+            {
+                "1": {
+                    "vtk_file": str(run_dir / "project" / "mode_1.vtk"),
+                    "cloud_file_name": str(cloud_dir / "cloud_3d_1.png"),
+                    "frequency": 12.5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A renderer that never returns: the timeout has to kill it and report the run as failed.
+    monkeypatch.setattr(
+        cloud_png,
+        "render_command",
+        lambda _path: [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+
+    config = settings.model_copy(update={"cloud_timeout_seconds": 1})
+    assert await worker.GuieWorker(config).run_once()
+
+    state = (await client.get(run["status_url"])).json()
+    assert state["status"] == "failed"
+    assert "超时" in (state["error"] or "")
 
 
 @needs_posix_worker

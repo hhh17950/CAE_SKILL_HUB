@@ -49,6 +49,9 @@ def test_container_paths_and_environment_names():
     assert "/app/" not in text
     # The launcher is optional: it is passed through, blank when unset.
     assert "CAE_GUIERUNNER_PATH: ${CAE_GUIERUNNER_PATH:-}" in text
+    # VTK renders the cloud images, so libGL has to be on the loader path in the container too -
+    # in both services, since either could be the one that renders.
+    assert text.count("LD_LIBRARY_PATH: /opt/ssta-cae/mesa/lib") == 2
 
 
 def test_public_base_url_is_never_a_listen_or_loopback_address():

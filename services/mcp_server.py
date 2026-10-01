@@ -41,6 +41,11 @@ SERVER_INSTRUCTIONS = """\
 
 “返回云图”由 get_run_result 完成：结果里每条模态都带一个 image_url，用任意 HTTP 客户端 GET 该
 URL 即可得到 PNG 云图；不要尝试读取服务器本地路径 cloud_file_name。
+
+模型文件较大时不要用 submit_modal_run：该工具的入参是 Base64 文本，体积比原文件大约 1/3，且会整段
+占用对话上下文（几百 KB 的模型就可能吃掉几十万 token）。模型超过约 100 KB 时，改用 REST multipart
+上传接口 POST /api/v1/guie-runs/modal（表单字段与工具的物理参数同名，模型字段名 model_file）；
+两者写入同一张任务表，之后的轮询、取结果方式完全相同。
 """
 
 # 工具注解：submit 会创建任务（非只读），其余三个只读取已有记录与文件。
@@ -108,6 +113,11 @@ async def submit_modal_run(
         - 本工具只接收 Base64 内容、不接受文件路径；请自行读取文件字节并 Base64 编码后传入。
         - 文件名仅用于服务端保存与日志展示，用用户的原文件名即可。
 
+    模型文件较大时改用 REST，不要调用本工具：``model_b64`` 是 Base64 文本，体积比原文件大约 1/3，
+    并且会整段进入对话上下文（几百 KB 就可能吃掉几十万 token）。超过约 100 KB 就改用
+    ``POST /api/v1/guie-runs/modal``（multipart，模型字段 ``model_file``），其余参数同名。
+    所有走这条链路的任务共用同一张任务表，之后的 get_run_status / get_run_result 完全一致。
+
     物理参数可以省略：省略即按下述默认值（钢）计算，此时应在回复中说明"使用的是默认参数"。
 
     参数:
@@ -144,7 +154,9 @@ async def submit_modal_run(
         raise ToolError("模型文件为空")
     if len(content) > settings.max_model_bytes:
         raise ToolError(
-            f"模型文件超过服务限制 {settings.max_model_bytes} 字节，请改用 REST multipart 上传"
+            f"模型文件 {len(content)} 字节超过 MCP 通道上限 {settings.max_model_bytes} 字节；"
+            "Base64 入参还会成倍占用对话 token，请改用 REST multipart 上传："
+            "POST /api/v1/guie-runs/modal（字段 model_file）"
         )
 
     filename = Path(model_filename or "modal.stp").name

@@ -88,11 +88,18 @@ async def test_initialize_answers_on_the_documented_path(settings):
         assert "tools" in result["capabilities"]
         assert result["serverInfo"]["name"]
         # The agent gets one chance to learn how to use this server: the instructions returned with
-        # initialize. They must name the entry tool, the result tool and the cloud-image field, or an
-        # agent asked to "run a simulation and return the cloud images" has to guess the whole flow.
+        # initialize. They must name the entry tool, the result tool, the cloud-image field and the
+        # REST escape hatch for large models, or an agent asked to "run a simulation and return the
+        # cloud images" has to guess the whole flow.
         instructions = result["instructions"]
         assert instructions
-        for expected in ("submit_modal_run", "get_run_status", "get_run_result", "image_url"):
+        for expected in (
+            "submit_modal_run",
+            "get_run_status",
+            "get_run_result",
+            "image_url",
+            "multipart",
+        ):
             assert expected in instructions
 
 

@@ -23,11 +23,23 @@ async def kill_group(process: asyncio.subprocess.Process):
 
 
 async def execute(
-    command: list[str], env: dict[str, str], cwd: Path, log_dir: Path, timeout: float
+    command: list[str],
+    env: dict[str, str],
+    cwd: Path,
+    log_dir: Path,
+    timeout: float,
+    append_logs: bool = False,
 ) -> ExecutionResult:
+    """Run a command in its own process group, capturing output under ``log_dir``.
+
+    ``append_logs`` keeps the previous run's output instead of truncating it, so a second step
+    (the cloud render after the flow script) writes its diagnostics into the run's own logs rather
+    than a file the caller has to be told about.
+    """
+    mode = "ab" if append_logs else "wb"
     with (
-        (log_dir / "stdout.log").open("wb") as stdout,
-        (log_dir / "stderr.log").open("wb") as stderr,
+        (log_dir / "stdout.log").open(mode) as stdout,
+        (log_dir / "stderr.log").open(mode) as stderr,
     ):
         process = await asyncio.create_subprocess_exec(
             *command,

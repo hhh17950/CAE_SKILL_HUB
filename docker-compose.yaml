@@ -13,6 +13,10 @@ services:
       # Callers fetch the cloud images from this prefix, so it must be an address they can reach -
       # never 0.0.0.0 (a listen-only address) and never 127.0.0.1 (loopback, this host only).
       CAE_PUBLIC_BASE_URL: ${CAE_PUBLIC_BASE_URL:-http://192.168.16.128:8000}
+      # VTK needs Mesa's libGL, which is not on the loader's default path. Host SSTA_CAE_PATH is
+      # mounted at /opt/ssta-cae, so the library directory below is the container-side equivalent
+      # of "<SSTA_CAE_PATH>/mesa/lib". Adjust if the layout on the CAE host differs.
+      LD_LIBRARY_PATH: /opt/ssta-cae/mesa/lib
     volumes:
       - ${WORKSPACE}:/opt/cae_service/workspace
       - ${SSTA_CAE_PATH}:/opt/ssta-cae
@@ -32,6 +36,8 @@ services:
       CAE_WORKSPACE_ROOT: /opt/cae_service/workspace
       CAE_SERVICE_LOG_ROOT: /opt/cae_service/workspace/logs
       CAE_GUIERUNNER_PATH: ${CAE_GUIERUNNER_PATH:-}
+      # The Worker renders the cloud images, so libGL must be reachable from this container too.
+      LD_LIBRARY_PATH: /opt/ssta-cae/mesa/lib
     volumes:
       - ${WORKSPACE}:/opt/cae_service/workspace
       - ${SSTA_CAE_PATH}:/opt/ssta-cae

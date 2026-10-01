@@ -21,7 +21,7 @@ def generate_cloud_png(vtk_file, cloud_file_name, frequency):
         raise RuntimeError("在点数据中找不到 modal_displacement/vector 数组")
 
     disp = vtk_to_numpy(vec)
-    mag = np.sqrt(disp * disp).sum(axis=1)
+    mag = np.sqrt((disp * disp).sum(axis=1))
 
     vtkmag = numpy_to_vtk(mag, deep=True)
     vtkmag.SetName("modal_displacement/mag")
@@ -86,7 +86,7 @@ def generate_cloud_png(vtk_file, cloud_file_name, frequency):
     text_actor = vtk.vtkTextActor()
     text_actor.SetInput("Frequency: %g\nMax: %.6f\nMin: %.6f" % (frequency, smax, smin))
     text_actor.GetPositionCoordinate().SetCoordinateSystemToNormalizedDisplay()
-    text_actor.SetPositon(0.02, 0.80)
+    text_actor.SetPosition(0.02, 0.80)
     prop = text_actor.GetTextProperty()
     prop.SetFontSize(16)
     prop.SetJustificationToLeft()

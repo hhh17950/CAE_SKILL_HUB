@@ -35,7 +35,7 @@ PIP_CONFIG_FILE=/dev/null python -m pip --isolated install --index-url https://p
 cp .env.example .env
 ```
 
-编辑 `.env`：至少确认 `CAE_WORKSPACE_ROOT`、`CAE_DATABASE_PATH`、`CAE_SERVICE_LOG_ROOT` 指向本机可写目录；要执行真实流程还需设置 `CAE_GUIERUNNER_PATH`（不设置时用仓库自带示例脚本跑通链路）。API 和 Worker 使用同一份配置。手动初始化数据库并启动 API：
+编辑 `.env`：至少确认 `CAE_WORKSPACE_ROOT`、`CAE_DATABASE_PATH`、`CAE_SERVICE_LOG_ROOT` 指向本机可写目录；要执行真实流程还需设置 `CAE_GUIERUNNER_PATH`（不设置时用仓库自带示例脚本跑通链路）。云图由 VTK 渲染，需要 Mesa 的 `libGL`：`CAE_MESA_LIB_PATH` 留空时按 `$SSTA_CAE_PATH/mesa/lib`、`/opt/mesa/lib` 依次探测，`./start.sh` 会自动把它加进 `LD_LIBRARY_PATH`（手动启动进程时要自己 export）。API 和 Worker 使用同一份配置。手动初始化数据库并启动 API：
 
 ```bash
 python -m alembic upgrade head

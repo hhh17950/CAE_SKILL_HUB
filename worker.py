@@ -2,6 +2,7 @@
 
 import asyncio
 import fcntl
+import os
 import signal
 import time
 from contextlib import contextmanager
@@ -10,8 +11,7 @@ from loguru import logger
 
 from core.config import Settings
 from core.logging import configure_logging
-from services import modal, paths
-from services.cloud_png import render_cloud_from_json
+from services import cloud_png, modal, paths
 from services.executor import execute
 from storage.repository import RunRepository
 
@@ -89,18 +89,46 @@ class GuieWorker:
             )
             if status == "succeeded":
                 try:
-                    cloud_dir = await asyncio.to_thread(
-                        render_cloud_from_json, paths.cloud_info(run_dir)
-                    )
+                    cloud_info_path = paths.cloud_info(run_dir)
+                    cloud_dir = cloud_png.renderable_cloud_dir(cloud_info_path)
+                    if cloud_dir is None:
+                        logger.info("CLOUD run_id={} no renderable cloud_info, skipped", run_id)
+                    else:
+                        # Separate process: it can be killed on timeout and a VTK crash (a missing
+                        # libGL, for instance) cannot take this Worker down with the run left in
+                        # "running". Its output appends to the run's logs, where get_run_log looks.
+                        cloud_result = await execute(
+                            cloud_png.render_command(cloud_info_path),
+                            os.environ.copy(),
+                            run_dir,
+                            run_dir / "logs",
+                            self.settings.cloud_timeout_seconds,
+                            append_logs=True,
+                        )
+                        if cloud_result.timed_out:
+                            status = "failed"
+                            error = (
+                                f"云图生成超时（超过 {self.settings.cloud_timeout_seconds:g} 秒），"
+                                "已终止渲染进程"
+                            )
+                            logger.error("CLOUD_TIMEOUT run_id={}", run_id)
+                        elif cloud_result.exit_code != 0:
+                            status = "failed"
+                            error = (
+                                f"云图生成失败（退出码 {cloud_result.exit_code}），"
+                                "详见任务 stderr 日志"
+                            )
+                            logger.error(
+                                "CLOUD_FAILED run_id={} exit_code={}",
+                                run_id,
+                                cloud_result.exit_code,
+                            )
+                        else:
+                            parameters["cloud_dir"] = cloud_dir
+                            logger.info("CLOUD run_id={} cloud_dir={}", run_id, cloud_dir)
                 except Exception as exc:
                     status, error = "failed", f"云图生成失败：{exc}"
                     logger.exception("run_id={} cloud generation failed", run_id)
-                else:
-                    if cloud_dir is not None:
-                        parameters["cloud_dir"] = cloud_dir
-                        logger.info("CLOUD run_id={} cloud_dir={}", run_id, cloud_dir)
-                    else:
-                        logger.info("CLOUD run_id={} no renderable cloud_info, skipped", run_id)
             await self.store.finish(run_id, status, result.exit_code, error)
             logger.info(
                 "FINISH run_id={} status={} exit_code={} error={} elapsed={:.2f}s",
@@ -144,12 +172,13 @@ class GuieWorker:
             with worker_lock(self.settings.database_path):
                 await self.store.recover_running()
                 logger.info(
-                    "Worker stared db={} workspace={} guierunner={} poll={}s timeout={}s",
+                    "Worker stared db={} workspace={} guierunner={} poll={}s timeout={}s cloud_timeout={}s",
                     self.settings.database_path.resolve(),
                     self.settings.workspace_root.resolve(),
                     self.settings.guierunner_path or "test-script",
                     self.settings.worker_poll_seconds,
                     self.settings.run_timeout_seconds,
+                    self.settings.cloud_timeout_seconds,
                 )
                 while True:
                     if not await self.run_once():
