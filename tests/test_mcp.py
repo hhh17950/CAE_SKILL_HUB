@@ -87,6 +87,13 @@ async def test_initialize_answers_on_the_documented_path(settings):
         result = rpc_body(response)["result"]
         assert "tools" in result["capabilities"]
         assert result["serverInfo"]["name"]
+        # The agent gets one chance to learn how to use this server: the instructions returned with
+        # initialize. They must name the entry tool, the result tool and the cloud-image field, or an
+        # agent asked to "run a simulation and return the cloud images" has to guess the whole flow.
+        instructions = result["instructions"]
+        assert instructions
+        for expected in ("submit_modal_run", "get_run_status", "get_run_result", "image_url"):
+            assert expected in instructions
 
 
 async def test_session_manager_runs_and_tools_are_listed(settings):
@@ -143,6 +150,46 @@ async def test_disabled_flag_mounts_nothing(settings):
     async with running_app(config) as client:
         assert (await client.post(MCP_PATH, json=INITIALIZE, headers=HEADERS)).status_code == 404
         assert (await client.get("/healthz")).status_code == 200
+
+
+async def test_tools_are_self_describing_and_failures_explain_themselves(settings):
+    """Two agent-facing contract points, both observed to be missing in a real deployment.
+
+    * Every tool must carry a human-readable title and say whether it writes: an agent platform shows
+      the title in prompts and can ask the user to confirm a non-read-only call.
+    * A call that fails for an expected reason must come back with that reason. The SDK only forwards
+      the text of a deliberate ``ToolError``; a plain ``ValueError`` reaches the caller as
+      "Error executing tool <name>" with the cause left on the server, so the agent cannot tell a
+      mistyped run_id from a genuine crash.
+    """
+    async with running_app(settings) as client:
+        session_id = await open_session(client)
+        listed = await client.post(
+            MCP_PATH,
+            json={"jsonrpc": "2.0", "id": 4, "method": "tools/list"},
+            headers={**HEADERS, "mcp-session-id": session_id},
+        )
+        tools = {tool["name"]: tool for tool in rpc_body(listed)["result"]["tools"]}
+        for name, tool in tools.items():
+            assert tool.get("title"), f"{name} has no title"
+        assert tools["submit_modal_run"]["annotations"]["readOnlyHint"] is False
+        for name in ("get_run_status", "get_run_result", "get_run_log"):
+            assert tools[name]["annotations"]["readOnlyHint"] is True, name
+
+        called = await client.post(
+            MCP_PATH,
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "get_run_result", "arguments": {"run_id": "run_missing"}},
+            },
+            headers={**HEADERS, "mcp-session-id": session_id},
+        )
+        result = rpc_body(called)["result"]
+        assert result["isError"] is True
+        text = next(item["text"] for item in result["content"] if item["type"] == "text")
+        assert "run_id 不存在" in text, text
 
 
 async def test_get_run_result_hands_the_agent_fetchable_image_urls(settings, monkeypatch):
