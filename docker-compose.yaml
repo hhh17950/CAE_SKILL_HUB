@@ -10,7 +10,9 @@ services:
       CAE_DATABASE_PATH: /opt/cae_service/workspace/guie.db
       CAE_WORKSPACE_ROOT: /opt/cae_service/workspace
       CAE_SERVICE_LOG_ROOT: /opt/cae_service/workspace/logs
-      CAE_PUBLIC_BASE_URL: http://0.0.0.0:8000
+      # Callers fetch the cloud images from this prefix, so it must be an address they can reach -
+      # never 0.0.0.0 (a listen-only address) and never 127.0.0.1 (loopback, this host only).
+      CAE_PUBLIC_BASE_URL: ${CAE_PUBLIC_BASE_URL:-http://192.168.16.128:8000}
     volumes:
       - ${WORKSPACE}:/opt/cae_service/workspace
       - ${SSTA_CAE_PATH}:/opt/ssta-cae

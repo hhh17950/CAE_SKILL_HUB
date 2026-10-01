@@ -51,6 +51,37 @@ def test_container_paths_and_environment_names():
     assert "CAE_GUIERUNNER_PATH: ${CAE_GUIERUNNER_PATH:-}" in text
 
 
+def test_public_base_url_is_never_a_listen_or_loopback_address():
+    """The cloud-image URLs handed to callers are built from CAE_PUBLIC_BASE_URL.
+
+    ``0.0.0.0`` is a listen-only address and ``127.0.0.1`` is loopback, so either one produces an
+    ``image_url`` that resolves on the server and nowhere else - the run still reports success, so
+    nothing else surfaces the mistake. This is a plain text check on purpose: it must also run on
+    hosts without the Docker CLI, where ``docker compose config`` is skipped.
+    """
+    text = compose_text()
+    match = re.search(r"CAE_PUBLIC_BASE_URL:\s*(\S+)", text)
+    assert match, "docker-compose.yaml must set CAE_PUBLIC_BASE_URL for the API service"
+    value = match.group(1)
+    for unreachable in ("0.0.0.0", "127.0.0.1", "localhost"):
+        assert unreachable not in value, f"compose must not advertise {unreachable}: {value}"
+
+
+def test_env_example_advertises_a_reachable_address():
+    """``cp .env.example .env`` is the documented setup step, so the template must be usable.
+
+    The wildcard value that used to live here survived until a real deployment, where it silently
+    turned every cloud-image URL into an unreachable one.
+    """
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    match = re.search(r"^CAE_PUBLIC_BASE_URL=(\S+)$", text, re.MULTILINE)
+    assert match, ".env.example must set CAE_PUBLIC_BASE_URL"
+    value = match.group(1)
+    assert value.startswith("http://"), value
+    for unreachable in ("0.0.0.0", "127.0.0.1", "localhost"):
+        assert unreachable not in value, f".env.example must not advertise {unreachable}: {value}"
+
+
 def test_only_the_api_publishes_a_port():
     text = compose_text()
     published = re.findall(r'^\s+- "([\d.]+:\d+:\d+)"$', text, re.MULTILINE)

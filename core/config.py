@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     max_request_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     max_model_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
     mcp_enabled: bool = True
-    # 用于把服务器本地图片路径转成智能体可下载的 URL。
-    public_base_url: str = "http://0.0.0.0:8000"
+    # 用于把服务器本地图片路径转成智能体可下载的 URL，必须是**调用方能访问到**的地址：部署时填
+    # 局域网 IP 或域名（如 http://192.168.16.128:8000）。0.0.0.0 是监听地址而不是可访问地址，
+    # 填了只会得到打不开的 image_url；这里默认 127.0.0.1 只够本机自测。
+    public_base_url: str = "http://127.0.0.1:8000"
 
     @field_validator("guierunner_path", mode="before")
     @classmethod

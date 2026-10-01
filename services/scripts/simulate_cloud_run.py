@@ -193,7 +193,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {base}/api/v1/guie-runs/{run_id}/cloud/cloud_3d_{index}.png")
     print("提醒：模拟数据不是仿真结果；CAE_PUBLIC_BASE_URL 必须是调用方能访问到的地址。")
     if urlsplit(base).hostname in {"0.0.0.0", "::", "::0"}:
-        print(f"警告：CAE_PUBLIC_BASE_URL={base} 用了 0.0.0.0，调用方拿到的 image_url 打不开。")
+        print(
+            f"警告：CAE_PUBLIC_BASE_URL={base} 用了 0.0.0.0（监听地址，不是可访问地址），"
+            "调用方拿到的 image_url 打不开；请改成服务器 IP，例如 http://192.168.16.128:8000。"
+        )
+    elif urlsplit(base).hostname in {"127.0.0.1", "localhost", "::1"}:
+        print(
+            f"警告：CAE_PUBLIC_BASE_URL={base} 是回环地址，只有本机能访问，"
+            "其他机器拿到的 image_url 打不开；请改成服务器 IP，例如 http://192.168.16.128:8000。"
+        )
     return 0
 
 

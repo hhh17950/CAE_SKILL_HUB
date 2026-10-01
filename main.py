@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -141,4 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(create_app(), host="127.0.0.1", port=8000)
+    # 与 start.sh 共用同一组开关，默认只监听本机回环地址。要让其他机器访问，用
+    # ``CAE_API_HOST=0.0.0.0 python main.py``，或直接 ``./start.sh start``（默认即 0.0.0.0）。
+    # 注意监听地址与对外公布地址是两件事：CAE_PUBLIC_BASE_URL 必须是调用方能访问的地址。
+    uvicorn.run(
+        create_app(),
+        host=os.environ.get("CAE_API_HOST", "127.0.0.1"),
+        port=int(os.environ.get("CAE_API_PORT", "8000")),
+    )

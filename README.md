@@ -42,7 +42,9 @@ python -m alembic upgrade head
 python main.py
 ```
 
-`python main.py` 默认监听 `127.0.0.1:8000`，只启动 API，不自动执行迁移或启动 Worker。原来的 `python -m uvicorn main:create_app --factory --host 127.0.0.1 --port 8000` 仍然可用，容器启动命令不变。
+`python main.py` 默认监听 `127.0.0.1:8000`（只接受本机连接），只启动 API，不自动执行迁移或启动 Worker。要让其他机器访问，用 `CAE_API_HOST=0.0.0.0 python main.py`，或直接用下面的 `./start.sh start`（默认绑定 `0.0.0.0`）。原来的 `python -m uvicorn main:create_app --factory --host 127.0.0.1 --port 8000` 仍然可用，容器启动命令不变。
+
+注意区分**监听地址**和**对外公布地址**：前者决定谁能连上（`0.0.0.0` = 接受其他机器，`127.0.0.1` = 只有本机）；后者是 `.env` 里的 `CAE_PUBLIC_BASE_URL`，只用于拼云图 `image_url`，必须填调用方能访问到的地址（内网即 `http://<服务器IP>:8000`），填 `0.0.0.0` 或 `127.0.0.1` 时智能体拿不到云图。详见 [开发与运维指南](docs/开发与运维指南.md)。
 
 另一个终端，激活同一虚拟环境并进入项目根目录：
 

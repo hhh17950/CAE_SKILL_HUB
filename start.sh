@@ -77,6 +77,9 @@ start / restart 选项:
   API 与 Worker 共用同一份 .env，均在项目根目录启动。
   只有当前没有服务运行时才会自动迁移，也可用 --no-migrate 关闭。
   停止顺序为 API → Worker；后台日志在 .runtime/api.out 与 .runtime/worker.out。
+  监听地址 --host（默认 0.0.0.0）决定谁能连上：0.0.0.0 接受其他机器，127.0.0.1 只接受本机。
+  .env 里的 CAE_PUBLIC_BASE_URL 只用于拼云图 URL，必须是调用方能访问到的地址，
+  不能填 0.0.0.0（监听地址，不可访问）或 127.0.0.1（回环，只有本机）。
 TEXT
 }
 
@@ -190,6 +193,46 @@ PYCODE
 
 health_ok() { [ -n "$(health_body 2>/dev/null)" ]; }
 
+# Read one NAME=value line out of the project .env. Parsed instead of sourced: the file is
+# operator-edited and a value may contain spaces or quotes. Empty output when absent.
+env_value() {
+  local line
+  [ -f "$SCRIPT_DIR/.env" ] || return 0
+  line="$(sed -n "s/^[[:space:]]*$1=//p" "$SCRIPT_DIR/.env" | tail -n1 | tr -d '\r')"
+  case "$line" in
+    \"*\") line="${line#\"}" && line="${line%\"}" ;;
+    \'*\') line="${line#\'}" && line="${line%\'}" ;;
+  esac
+  printf '%s\n' "$line"
+}
+
+# CAE_PUBLIC_BASE_URL only ever goes into the image URLs handed to callers. A wildcard or loopback
+# value there looks fine on the server and breaks on every other machine, so say it at start time
+# instead of letting an agent find out while fetching a cloud image.
+warn_about_public_base_url() {
+  local value
+  value="$(env_value CAE_PUBLIC_BASE_URL)"
+  [ -n "$value" ] || return 0
+  case "$value" in
+    *://0.0.0.0* | *://127.0.0.1* | *://localhost* | *://\[::\]*)
+      warn "CAE_PUBLIC_BASE_URL=$value 只对本机有效：其他机器拿到的云图 image_url 会打不开；"
+      warn "请把它改成调用方能访问的地址，例如 http://<服务器IP>:$API_PORT"
+      ;;
+  esac
+}
+
+# The addresses another machine can use to reach the API. Every IPv4 the host reports is listed,
+# because the first one is often a container bridge (172.17.x.x) rather than the address callers
+# use. Prints nothing on a host where `hostname -I` is unavailable.
+reachable_urls() {
+  local ip out=""
+  for ip in $(hostname -I 2>/dev/null); do
+    case "$ip" in '' | *[!0-9.]*) continue ;; esac
+    out="$out http://$ip:$API_PORT"
+  done
+  printf '%s' "${out# }"
+}
+
 process_uptime() { ps -o etime= -p "$1" 2>/dev/null | tr -d ' '; }
 
 stale_pid_file() {
@@ -277,6 +320,7 @@ run_foreground() {
 
 cmd_start() {
   preflight
+  warn_about_public_base_url
   stale_pid_file "$API_PID_FILE" API
   stale_pid_file "$WORKER_PID_FILE" Worker
 
@@ -324,6 +368,11 @@ cmd_start() {
 
   log "启动完成"
   log "  API   $(health_url)  文档 http://$(api_probe_host):$API_PORT/docs  日志 $API_LOG"
+  local reachable
+  reachable="$(reachable_urls)"
+  if [ -n "$reachable" ]; then
+    log "  其他机器访问 $reachable（把 CAE_PUBLIC_BASE_URL 设为调用方能访问的那个）"
+  fi
   log "  Worker 日志 $WORKER_LOG"
   log "  停止  ./start.sh stop    状态  ./start.sh status"
   return 0
