@@ -1,6 +1,6 @@
 # CAE SkillHub · 719 流程执行服务
 
-将固定 CAE 自动化脚本暴露成异步任务接口：上传几何模型 → 返回 `run_id` → Worker 执行 → 查询状态、日志与结果。调用方用 multipart 上传模型文件，任务目录由服务在 `CAE_WORKSPACE_ROOT` 下按 `run_id` 创建，不接受调用方指定的服务端路径。提供 HTTP/OpenAPI 与 MCP（`/mcp`）两种接入方式。执行默认使用外部受控启动器 `CAE_GUIERUNNER_PATH`，它负责运行仓库内的流程脚本 `services/scripts/modal_nogui_process.py`；未配置启动器时回退到仓库自带的示例脚本 `services/scripts/modal_test.py`（只回显参数、写占位结果，不是真实 CAE 仿真）。
+将固定 CAE 自动化脚本暴露成异步任务接口：上传几何模型 → 返回 `run_id` → Worker 执行 → 查询状态、日志与结果。调用方用 multipart 上传模型文件，任务目录由服务在 `CAE_WORKSPACE_ROOT` 下按 `run_id` 创建，不接受调用方指定的服务端路径。提供 HTTP/OpenAPI 与 MCP（`/mcp`）两种接入方式。执行默认使用外部受控启动器 `CAE_GUIERUNNER_PATH`，它负责运行仓库内的流程脚本 `services/scripts/modal_nogui_process.py`；未配置启动器时回退到仓库自带的示例脚本 `services/scripts/modal_test.py`（只回显参数、写占位结果，不是真实 CAE 仿真）。真实流程尚不可用时，可用 `python -m services.scripts.simulate_cloud_run` 造一个已完成任务，用来演示智能体取云图的链路（模拟数据，不是仿真结果）。
 
 运行目标：Linux、Python 3.10。开发验证使用 Python 3.10.11。无需 Redis、Celery、uv 或 Agent 编排框架。
 

@@ -47,6 +47,8 @@ def http_app(server: MCPServer, settings: Settings):
 
 
 def _repo(settings: Settings) -> RunRepository:
+    """Repository for a tool's own ``Settings()``: the tools read the process environment, the same
+    ``.env`` the API and the Worker are started with."""
     return RunRepository(settings.database_path)
 
 

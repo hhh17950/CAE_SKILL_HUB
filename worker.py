@@ -114,10 +114,29 @@ class GuieWorker:
             await self.store.finish(run_id, "unknown", None, "Worker 被中断，需人工核对")
             logger.warning("CANCELLED run_id={} marked unknown, run_id")
             raise
+        except OSError as exc:
+            # The process never started: missing or unusable launcher, a deleted script, a runaway
+            # working directory. The run's own stdout/stderr stay empty in that case, so the command
+            # and the reason have to travel in the error field (and in the run's stderr log): callers
+            # cannot read this host's Worker log, and the OS message alone may omit the path.
+            message = f"无法启动流程命令 {' '.join(modal.command(self.settings))}：{exc}"
+            logger.exception("run_id={} could not start the flow command", run_id)
+            self._record_start_failure(run_id, message)
+            await self.store.finish(run_id, "failed", None, message)
         except Exception:
             logger.exception("run_id={} execution error", run_id)
             await self.store.finish(run_id, "failed", None, "执行器异常，请检查 Worker 日志")
         return True
+
+    def _record_start_failure(self, run_id: str, message: str) -> None:
+        """Append a start failure to the run's stderr log so get_run_log can show it."""
+        try:
+            path = paths.stderr_log(paths.task_dir(self.settings, run_id))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[worker] {message}\n")
+        except OSError:
+            logger.exception("run_id={} could not record the start failure", run_id)
 
     async def serve(self):
         try:

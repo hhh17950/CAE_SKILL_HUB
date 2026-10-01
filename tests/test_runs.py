@@ -9,6 +9,7 @@ import asyncio
 import os
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -133,6 +134,23 @@ async def test_failure_and_timeout(client, settings, model_file):
 
 
 @needs_posix_worker
+async def test_unstartable_launcher_names_the_reason(client, settings, model_file, tmp_path):
+    """A command that never starts leaves no output, so the reason must reach the caller."""
+    worker = load_worker()
+    run = await submit(client, model=model_file)
+    missing = tmp_path / "no-such-launcher"
+    await worker.GuieWorker(settings.model_copy(update={"guierunner_path": missing})).run_once()
+
+    state = (await client.get(run["status_url"])).json()
+    assert state["status"] == "failed" and state["exit_code"] is None
+    assert str(missing) in state["error"]
+
+    log = await client.get(f"{BASE}/{run['run_id']}/logs/stderr")
+    assert log.status_code == 200
+    assert str(missing) in log.text
+
+
+@needs_posix_worker
 async def test_cancel_marks_unknown(client, settings, model_file):
     worker = load_worker()
     run = await submit(client, model=model_file)
@@ -177,6 +195,34 @@ async def test_cloud_image_must_be_declared_by_cloud_info(client, settings, mode
     assert cloud.status_code == 404
     traversal = await client.get(f"{BASE}/{run['run_id']}/cloud/..%2Fcloud_info.json")
     assert traversal.status_code in (404, 422)
+
+
+async def test_simulated_run_serves_results_logs_and_images(client, settings):
+    """The demo helper must expose the same caller surface as a real finished run.
+
+    Unlike the cases above this needs no Worker and no POSIX, so it also guards the cloud-image
+    path on the Windows development host.
+    """
+    from services.scripts.simulate_cloud_run import simulate
+
+    row = await simulate(settings, "run_demo_rest", modes=2)
+    assert row["status"] == "succeeded" and row["exit_code"] == 0
+
+    state = (await client.get(f"{BASE}/run_demo_rest")).json()
+    assert state["status"] == "succeeded" and state["error"] is None
+
+    results = (await client.get(f"{BASE}/run_demo_rest/results")).json()
+    assert results["exit_code"] == 0
+    assert sorted(results["cloud_info"]) == ["1", "2"]
+    assert Path(results["cloud_dir"]).is_dir()
+    for entry in results["cloud_info"].values():
+        name = Path(entry["cloud_file_name"]).name
+        image = await client.get(f"{BASE}/run_demo_rest/cloud/{name}")
+        assert image.status_code == 200
+        assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+    assert "模拟数据" in (await client.get(f"{BASE}/run_demo_rest/logs/stdout")).text
+    assert (await client.get(f"{BASE}/run_demo_rest/cloud/cloud_3d_9.png")).status_code == 404
 
 
 async def test_no_startup_migration(tmp_path):
